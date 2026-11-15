@@ -109,11 +109,21 @@ L'analisi salva la traccia in `ripresa.track.json` accanto al video: i comandi
 
 ## Prestazioni
 
-Misurate su un video sintetico Full HD verticale (1080×1920, 15 s, 450
-fotogrammi) in un ambiente cloud con 4 core CPU: vedi la tabella nella
-sezione seguente, aggiornata ad ogni rilascio.
+Misurate su un Reel sintetico Full HD verticale (1080×1920, 15 s, 450
+fotogrammi) con verità di riferimento, su una macchina cloud con 4 core CPU e
+**senza GPU** (su un PC con più core i tempi scendono):
 
-<!-- PRESTAZIONI -->
+| Misura | Risultato |
+|---|---|
+| Analisi (tracking + smoothing) | 30 s |
+| Rendering + codifica x264 "slow" | 47 s (con `--codec h264_nvenc` la codifica passa alla GPU) |
+| Errore medio sugli angoli, mani ai lati | 0.58 px (massimo 2.1 px) |
+| Errore medio, un angolo coperto da un braccio | 0.78 px (massimo 2.7 px) |
+| Errore medio, lato coperto da un oggetto | 1.2 px (massimo 7.8 px) |
+| Tremolio dell'immagine inserita | 0.07 px |
+| Rapporto d'aspetto stimato dal video | 0.8000 (vero 0.800) |
+
+Dettagli e confronto delle alternative in `docs/ANALISI_TECNICA.md`.
 
 ## Struttura del progetto
 
@@ -140,8 +150,9 @@ docs/                 analisi tecnica e guida alle riprese
 
 * Pannello **bianco** non supportato (serve il verde: vedi l'analisi tecnica).
 * Un oggetto con un **bordo dritto** che copre un **intero lato** del pannello
-  non è distinguibile da un bordo vero: il quadro risulta accorciato finché
-  l'oggetto è davanti.
+  può essere scambiato per il bordo vero: il quadro risulta un po' deformato
+  finché l'oggetto è davanti (fino a ~30 px nei test). Dita, mani e oggetti
+  irregolari sono invece gestiti.
 * Verdi saturi nello sfondo **a contatto** con il pannello possono disturbare
   il rilevamento.
 * Con movimenti molto rapidi l'immagine inserita resta più nitida della scena

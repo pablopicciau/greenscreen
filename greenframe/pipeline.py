@@ -27,7 +27,7 @@ from . import geometry as geo
 from .compositor import Compositor
 from .config import Config
 from .image_fit import load_image
-from .smoothing import smooth_track
+from .smoothing import flag_inconsistent_sides, smooth_track
 from .tracker import STATUS_LOST, STATUS_MODEL, STATUS_OK, STATUS_PREDICTED, Track, track_frames
 from .video_io import FrameReader, FrameWriter, VideoInfo, probe
 
@@ -85,6 +85,10 @@ def analyze(video_path: str, cfg: Config, track_path: str | None = None,
     with FrameReader(info) as reader:
         track = track_frames(reader, (info.width, info.height), info.fps, cfg, prog)
     prog.done()
+    fixed = flag_inconsistent_sides(track, cfg.track.aspect_tolerance, cfg.track.trusted_support)
+    if fixed:
+        log(f"Controllo di coerenza: {len(fixed)} fotogrammi con un lato coperto da un oggetto "
+            f"sono stati ricostruiti.")
     track.smooth = smooth_track(track, cfg.track.smooth_half_window, cfg.track.outlier_px)
     log(track.summary())
     if track.n_frames and track.status.count(STATUS_LOST) == track.n_frames:
@@ -193,9 +197,17 @@ def draw_debug(frame: np.ndarray, track: Track, i: int) -> np.ndarray:
     text = f"#{i} {status} conf {track.confidence[i]:.2f}" if i < track.n_frames else f"#{i} fuori traccia"
     if i < track.n_frames and track.reasons and track.reasons[i]:
         text += f" ({track.reasons[i]})"
+    # Scritta su un riquadro scuro semitrasparente (leggibile su qualunque
+    # sfondo; un contorno disegnato con spessore maggiore non combacia col
+    # testo in tutte le versioni di OpenCV).
+    font_scale = 1.0 * scale + 0.3
+    (tw, tht), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, th)
     org = (int(20 * scale) + 5, int(50 * scale) + 10)
-    cv2.putText(out, text, org, cv2.FONT_HERSHEY_SIMPLEX, 1.0 * scale + 0.3, (0, 0, 0), th + 3, cv2.LINE_AA)
-    cv2.putText(out, text, org, cv2.FONT_HERSHEY_SIMPLEX, 1.0 * scale + 0.3, color, th, cv2.LINE_AA)
+    x0, y0 = org[0] - 6, org[1] - tht - 8
+    x1, y1 = min(out.shape[1], org[0] + tw + 6), org[1] + base + 6
+    box = out[max(0, y0):y1, max(0, x0):x1]
+    box[:] = (box * 0.35).astype(np.uint8)
+    cv2.putText(out, text, org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, th, cv2.LINE_AA)
     return out
 
 

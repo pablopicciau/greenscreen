@@ -66,6 +66,14 @@ class TrackParams:
     smooth_half_window: int = 2
     # Deviazione (pixel) oltre la quale una misura è considerata anomala.
     outlier_px: float = 6.0
+    # Controllo di coerenza offline: un fotogramma il cui quad implica un
+    # rapporto d'aspetto diverso da quello del pannello (stimato su tutto il
+    # video) di più di questa frazione ha un lato sbagliato (tipicamente il
+    # bordo di un oggetto davanti al pannello) che viene ricostruito.
+    # La soglia effettiva è max(aspect_tolerance, 3 × deviazione mediana).
+    aspect_tolerance: float = 0.02
+    # I lati visibili per almeno questa frazione non vengono mai messi in dubbio.
+    trusted_support: float = 0.9
 
 
 @dataclass

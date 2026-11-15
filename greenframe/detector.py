@@ -18,9 +18,11 @@ Nella passata di smoothing (offline) la posizione degli angoli ricostruiti
 viene poi corretta interpolando tra il fotogramma prima e quello dopo
 l'occlusione, eliminando la deriva.
 
-Limite noto: un oggetto con un bordo **dritto** (tavolo, manica tesa, mobile)
-che copre un intero lato produce un contorno rettilineo indistinguibile da un
-bordo vero: il quadro risulterà "accorciato" finché l'oggetto è davanti.
+Un oggetto davanti a un lato può avere tratti di bordo quasi dritti che
+vengono scambiati per il lato vero: a fine analisi un controllo di coerenza
+globale (``smoothing.flag_inconsistent_sides``) li riconosce dal rapporto
+d'aspetto. Limite residuo: un oggetto con un bordo **perfettamente dritto**
+che copre un intero lato non sempre viene corretto.
 
 Alternative valutate e scartate:
 

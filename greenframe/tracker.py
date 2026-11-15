@@ -53,6 +53,7 @@ class Track:
     status: list[str]                   # (T,) uno degli STATUS_*
     panel_luma: np.ndarray              # (T,) luminosità del pannello (NaN se assente)
     hidden_side: np.ndarray | None = None  # (T,) lato ricostruito dagli altri tre, -1 = nessuno
+    support: np.ndarray | None = None      # (T, 4) copertura visibile di ciascun lato (0-1)
     smooth: np.ndarray | None = None    # (T, 4, 2) angoli finali, NaN = non sostituire
     panel_aspect: float | None = None   # larghezza/altezza fisica del pannello
     aspect_source: str = "sconosciuto"  # 'utente' | 'stimato' | 'predefinito'
@@ -82,6 +83,7 @@ class Track:
             "confidence": np.round(self.confidence, 4).tolist(),
             "status": self.status,
             "hidden_side": None if self.hidden_side is None else [int(v) for v in self.hidden_side],
+            "support": None if self.support is None else np.round(self.support, 3).tolist(),
             "panel_luma": [None if np.isnan(v) else round(float(v), 2) for v in self.panel_luma],
             "panel_aspect": self.panel_aspect, "aspect_source": self.aspect_source,
             "focal": self.focal, "focal_reliable": self.focal_reliable,
@@ -105,6 +107,7 @@ class Track:
             confidence=np.array(data["confidence"], float), status=list(data["status"]),
             panel_luma=np.array([np.nan if v is None else v for v in data["panel_luma"]], float),
             hidden_side=None if data.get("hidden_side") is None else np.array(data["hidden_side"], int),
+            support=None if data.get("support") is None else np.array(data["support"], float),
             panel_aspect=data.get("panel_aspect"), aspect_source=data.get("aspect_source", "?"),
             focal=data.get("focal"), focal_reliable=data.get("focal_reliable", False),
             green_ratio=data.get("green_ratio"), reasons=data.get("reasons", []),
@@ -208,7 +211,7 @@ def track_frames(
     kp, dp, tp = cfg.key, cfg.detect, cfg.track
     est = PanelModelEstimator(image_size, cfg.render.panel_aspect)
     history: list[tuple[int, np.ndarray]] = []
-    raws, confs, status, lumas, reasons, hidden = [], [], [], [], [], []
+    raws, confs, status, lumas, reasons, hidden, supports = [], [], [], [], [], [], []
     green_ratio: float | None = None
     last_quad: np.ndarray | None = None
     lost = 0
@@ -232,6 +235,7 @@ def track_frames(
             lumas.append(det.panel_luma)
             reasons.append("")
             hidden.append(det.completed[0] if det.completed else -1)
+            supports.append(np.where(det.measured, det.support, 0.0))
             history = (history + [(i, quad)])[-3:]
             last_quad = quad
             lost = 0
@@ -244,6 +248,7 @@ def track_frames(
             reasons.append(diag.get("reason", "sconosciuto"))
             lumas.append(np.nan)
             hidden.append(-1)
+            supports.append(np.zeros(4))
             if pred is not None and lost <= tp.max_lost:
                 # Breve perdita: posizione prevista (verrà rifinita dallo smoothing).
                 raws.append(pred)
@@ -277,6 +282,7 @@ def track_frames(
         status=status,
         panel_luma=np.array(lumas, dtype=np.float64),
         hidden_side=np.array(hidden, dtype=int),
+        support=np.array(supports, dtype=np.float64).reshape(-1, 4),
         panel_aspect=aspect, aspect_source=source,
         focal=focal, focal_reliable=f_ok,
         green_ratio=green_ratio,

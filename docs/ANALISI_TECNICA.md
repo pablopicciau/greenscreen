@@ -116,7 +116,25 @@ anche con rotazioni oltre i 45°.
 | Punti di fuga + rapporto d'aspetto fisico + focale (geometria proiettiva esatta) | **scartata** | esatta su dati ideali (errore 1e-10 px), ma **instabile**: 0.05° di errore sulle direzioni dei lati → 16 px di errore mediano; focale sbagliata del 20% → 33 px |
 | Retta prevista a velocità costante | scartata come metodo principale | deriva rapidamente se il movimento cambia |
 | Riconoscimento del "bordo impostore" (un lato che salta rispetto alla predizione) | **scartata** | funziona all'ingresso dell'oggetto, ma se la stima deriva il bordo vero, quando riappare, viene a sua volta scartato: blocco con errori fino a 100 px |
-| **Ricostruzione dai 3 lati visibili + lunghezze dal fotogramma precedente**, poi **interpolazione offline** tra il fotogramma prima e quello dopo l'occlusione | **scelta** | l'errore resta confinato lungo le rette misurate; interpolare tra due misure è stabile, estrapolare no |
+| Ricostruzione dai 3 lati visibili + lunghezze dal fotogramma precedente (durante il tracking) | **scelta** come stima provvisoria | l'errore resta confinato lungo le rette misurate, ma si accumula nel tempo |
+| Interpolazione offline **lineare** tra il fotogramma prima e quello dopo | superata | in un'occlusione di 25 fotogrammi (Full HD) errore massimo 31 px: la prospettiva non varia linearmente |
+| Interpolazione lineare + riscalatura per rispettare il rapporto d'aspetto noto | **scartata** | peggiora (23.8 px): l'errore dell'interpolazione è di *forma* (inclinazione del lato), non di scala |
+| **Interpolazione offline cubica di Hermite** (usa anche le velocità misurate ai due estremi) | **scelta** | stessa occlusione: errore massimo **2.4 px** |
+
+Durante il tracking, inoltre, il bordo di un oggetto davanti al pannello può
+contenere tratti abbastanza dritti da essere scambiati per il lato vero.
+A fine analisi si esegue quindi un **controllo di coerenza globale**: il
+rapporto d'aspetto implicato da ogni quad (con la focale stimata sul video)
+viene confrontato con quello del pannello. Nei test Full HD i fotogrammi
+corretti deviano al massimo dello 0.9%, quelli con un lato sbagliato almeno
+del 2.3%: soglia 2% (o 3 volte la deviazione mediana, se il video è più
+rumoroso). Il lato colpevole viene scelto tra quelli non pienamente visibili
+(copertura < 90%) come quello la cui ricostruzione ripristina meglio la
+coerenza. Considerare candidati tutti e quattro i lati è stato provato e
+scartato: peggiora (da 1.1 a 4.1 px di errore medio sul lato coperto).
+
+Effetto complessivo sul lato inferiore coperto per 1.5 s (Full HD): errore
+massimo da **84 px** (solo tracking) a **7.8 px**, medio da 9.0 a **1.2 px**.
 
 ### 3.5 Smoothing
 
@@ -233,8 +251,8 @@ l'installazione tutto funziona offline.
 | Superficie verde uniforme senza texture | alta | tracking by detection sui bordi | risolto |
 | Angolo coperto da una mano | alta | rette dei lati + intersezione | risolto (~1 px) |
 | Mani sopra i bordi | alta | RANSAC a copertura contigua, sub-pixel con rifiuto dei profili anomali | risolto |
-| Lato intero coperto da un oggetto irregolare | media | ricostruzione + interpolazione offline | parziale: mediana 2 px, picchi 35-65 px |
-| Lato intero coperto da un oggetto con **bordo dritto** | media | — (ambiguo dal solo colore) | **limite dichiarato** |
+| Lato intero coperto da un oggetto irregolare | media | ricostruzione, controllo di coerenza globale, interpolazione di Hermite | risolto: 1.2 px medio, 7.8 px massimo (Full HD) |
+| Lato intero coperto da un oggetto con **bordo dritto** | media | controllo di coerenza (riconosce i fotogrammi ma non sempre il lato colpevole) | **limite dichiarato**: fino a ~33 px (test 540p) |
 | Verde saturo dello sfondo attaccato al pannello | media | soglia adattiva, ritaglio sulla predizione, punteggio di forma | parziale; consigliati riprese pulite o marcatori |
 | Quadro parzialmente fuori inquadratura | media | punti sul bordo del fotogramma esclusi, lato ricostruito | risolto |
 | Tremolio dell'immagine inserita | media | LOESS robusto offline | risolto (0.08 px) |
@@ -254,26 +272,32 @@ un movimento brusco), mani che lo reggono con ombra, un braccio che copre
 completamente un angolo, un oggetto irregolare che nasconde il lato
 inferiore, sfocatura di movimento, rumore del sensore, compressione H.264.
 
-Video 540×960 (180 fotogrammi):
+**Reel Full HD verticale (1080×1920, 15 s, 450 fotogrammi)**:
 
-| Scenario | Errore medio per angolo | Peggior angolo (mediana / p95) |
-|---|---|---|
-| mani ai lati, movimento libero | 0.77 px | 1.3 / 2.2 px |
-| angolo completamente coperto | 0.70 px | 1.1 / 1.3 px |
-| lato inferiore coperto | 3.9 px | 2.0 / 36 px |
+| Scenario | Fotogrammi | Errore medio per angolo | Peggior angolo: mediana / p95 / massimo |
+|---|---|---|---|
+| mani ai lati, movimento libero (anche fuori inquadratura) | 308 | **0.58 px** | 1.2 / 1.8 / 2.1 px |
+| un angolo completamente coperto da un braccio | 98 | **0.78 px** | 1.4 / 2.4 / 2.7 px |
+| lato inferiore coperto da un oggetto irregolare | 44 | **1.24 px** | 1.7 / 7.7 / 7.8 px |
+| tutti | 450 | **0.69 px** | 1.3 / 2.3 / 7.8 px |
 
-* Rapporto d'aspetto stimato: 0.797 (vero 0.800); focale 655 px (vera 661 px).
-* Tremolio (variazione seconda dell'errore): 0.23 px grezzo → 0.08 px dopo lo smoothing.
+* Rapporto d'aspetto stimato dal video: **0.8000** (vero 0.800).
+* Focale stimata: 1315 px (vera 1322 px, −0.5%).
+* Tremolio (variazione seconda dell'errore): **0.07 px**.
 * Nessun fotogramma perso.
+* Tempi (4 core CPU in cloud, senza GPU): analisi **30 s**, rendering con
+  codifica x264 "slow" **47 s**. File finale H.264 BT.709 + audio AAC, 18 MB.
 
-Le misure in Full HD sono riportate nel README (sezione "Prestazioni").
+Video 540×960 (180 fotogrammi), stessi scenari: errore medio 0.79 px;
+lato coperto 1.1 px medio (4.1 px massimo). Con un oggetto a **bordo dritto**
+davanti al lato inferiore: 8.3 px medio, ~33 px massimo (limite dichiarato).
 
 ## 7. Roadmap
 
 | Fase | Contenuto | Stato |
 |---|---|---|
 | 1 | rilevamento del rettangolo verde, angoli, omografia, warpPerspective | **fatto** |
-| 2 | tracking temporale, prospettiva, recupero, smoothing, quad fuori inquadratura | **fatto** |
+| 2 | tracking temporale, prospettiva, recupero, smoothing, quad fuori inquadratura, lati nascosti | **fatto** |
 | 3 | occlusioni: chiave morbida, despill, luce, composizione additiva | **fatto** |
 | 3b | modalità assistita ArUco/AprilTag | da fare |
 | 3c | motion blur sintetico sull'immagine inserita | da fare |

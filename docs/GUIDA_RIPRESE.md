@@ -25,8 +25,8 @@ mani in modo affidabile. Vedi `ANALISI_TECNICA.md` per le alternative.
 * Sfondo con un buon contrasto rispetto al verde (pareti neutre, legno, ecc.).
 * Mani nude o maniche non verdi.
 * Un oggetto con un **bordo dritto** (tavolo, mobile, braccio con manica tesa)
-  che copre **un intero lato** del pannello è l'unico caso che il programma non
-  sa distinguere da un bordo vero: il quadro risulterà accorciato finché
+  che copre **un intero lato** del pannello è il caso più difficile: può essere
+  scambiato per il bordo vero e il quadro risulterà un po' deformato finché
   l'oggetto è davanti. Coprire angoli e parti di lati con le dita invece va bene.
 
 ## Luce
