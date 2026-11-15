@@ -1,0 +1,14 @@
+# Dipendenze obbligatorie (tutte open source, funzionano offline).
+numpy>=1.24
+# OpenCV con i moduli "contrib" (ArUco/AprilTag inclusi). Su un PC desktop la
+# versione con interfaccia grafica va bene; su server si può usare la variante
+# "-headless". Non installare insieme più varianti di opencv-python.
+opencv-contrib-python>=4.8
+
+# FFmpeg: serve l'eseguibile. Su Windows il modo più semplice è
+#   winget install Gyan.FFmpeg
+# in alternativa questo pacchetto scarica un ffmpeg già compilato:
+imageio-ffmpeg>=0.5
+
+# Solo per lo sviluppo / i test:
+pytest>=7

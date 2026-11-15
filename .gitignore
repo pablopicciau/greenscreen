@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Output generati dai test e dalle prove (i video possono essere pesanti)
+output/
+samples/generated/
+*.track.json
+.pytest_cache/

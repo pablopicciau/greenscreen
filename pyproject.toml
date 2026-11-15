@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "greenframe"
+version = "0.1.0"
+description = "Green Frame Replacer: sostituisce un pannello verde tenuto in mano con un'immagine, in un video"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "opencv-contrib-python>=4.8",
+    "imageio-ffmpeg>=0.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+greenframe = "greenframe.cli:main"
+
+[tool.setuptools]
+packages = ["greenframe"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
