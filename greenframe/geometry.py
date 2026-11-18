@@ -260,12 +260,16 @@ def complete_by_ratio(
 ) -> np.ndarray | None:
     """Ricostruisce il lato ``missing`` dagli altri tre e da un quad di riferimento.
 
-    È il metodo usato in pratica. I tre lati visibili determinano due angoli
-    (le intersezioni tra loro) e le rette su cui stanno gli altri due; resta da
-    stabilire *dove* si trovano lungo quelle rette. Le due lunghezze mancanti si
-    ricavano dal quad di riferimento (fotogramma precedente), scalate come il
-    lato opposto visibile. L'errore resta confinato lungo le rette misurate e
-    non viene amplificato (al contrario di :func:`complete_rectangle`).
+    È il metodo usato durante il tracking (fotogramma per fotogramma). I tre
+    lati visibili determinano due angoli (le intersezioni tra loro) e le rette
+    su cui stanno gli altri due; resta da stabilire *dove* si trovano lungo
+    quelle rette. Le due lunghezze mancanti si ricavano dal quad di
+    riferimento (ultimo fotogramma pulito), scalate come il lato opposto
+    visibile. L'errore resta confinato lungo le rette misurate e non viene
+    amplificato, ma non segue un'inclinazione del pannello avvenuta dopo il
+    riferimento: per questo l'analisi offline
+    (:func:`smoothing.refine_hidden_sides`) lo corregge con
+    :func:`complete_rectangle`.
     """
     opp = (missing + 2) % 4
     # Angoli noti: estremi del lato opposto (corner opp e opp+1).
@@ -301,11 +305,13 @@ def complete_rectangle(
 ) -> np.ndarray | None:
     """Ricostruisce il lato ``missing`` (non visibile) dagli altri tre.
 
-    ATTENZIONE: metodo valutato e **scartato** per l'uso nella pipeline.
-    È esatto su dati ideali, ma numericamente instabile: un errore di soli
-    0.05° nella direzione dei lati misurati sposta il punto di fuga e produce
-    errori di ~15-35 px. Resta qui come riferimento (e nei test) perché
-    documenta perché si usa :func:`complete_by_ratio`.
+    È esatto su dati ideali ma sensibile al rumore: quando i lati adiacenti
+    sono quasi paralleli, un piccolo errore nella loro direzione sposta molto
+    il punto di fuga (con i lati misurati al decimo di pixel l'errore tipico
+    in Full HD è ~0.5 px, ma alcuni fotogrammi superano i 30 px). Per questo
+    non si usa da solo: :func:`smoothing.refine_hidden_sides` ne stima
+    l'incertezza fotogramma per fotogramma e lo combina nel tempo con
+    l'interpolazione.
 
     Un rettangolo fisico visto in prospettiva è vincolato: i punti di fuga
     delle due direzioni dei lati corrispondono a direzioni 3D ortogonali, e il

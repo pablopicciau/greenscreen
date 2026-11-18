@@ -60,8 +60,8 @@ def test_complete_by_ratio_static():
             assert np.abs(rec - q).max() < 1e-6
 
 
-def test_complete_rectangle_exact_but_documented():
-    """Il metodo dei punti di fuga è esatto su dati ideali (scartato per instabilità)."""
+def test_complete_rectangle_exact():
+    """Il metodo dei punti di fuga è esatto su dati ideali."""
     for q in projected_quads(10):
         for missing in range(4):
             rec = geo.complete_rectangle(geo.quad_lines(q), missing, FOCAL, 0.8, (W, H), q.mean(axis=0))

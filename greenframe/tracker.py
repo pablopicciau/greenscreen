@@ -26,13 +26,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
+import cv2
 import numpy as np
 
 from . import geometry as geo
 from .config import Config
 from .detector import Detection, detect_quad
+from .keyer import PanelColor, generic_green_mask
 
-TRACK_VERSION = 1
+# 2: luminosità del pannello in luce lineare, larghezza dei bordi, giunzioni a
+# T, modello di colore, otturatore e nitidezza stimati.
+TRACK_VERSION = 2
 
 # Stati possibili di un fotogramma nella traccia.
 STATUS_OK = "ok"              # misurato
@@ -54,6 +58,8 @@ class Track:
     panel_luma: np.ndarray              # (T,) luminosità del pannello (NaN se assente)
     hidden_side: np.ndarray | None = None  # (T,) lato ricostruito dagli altri tre, -1 = nessuno
     support: np.ndarray | None = None      # (T, 4) copertura visibile di ciascun lato (0-1)
+    edge_width: np.ndarray | None = None   # (T, 4) larghezza dei bordi misurata (px), NaN se assente
+    impostor: np.ndarray | None = None     # (T, 4) prob. che il lato sia il bordo di un oggetto davanti
     smooth: np.ndarray | None = None    # (T, 4, 2) angoli finali, NaN = non sostituire
     panel_aspect: float | None = None   # larghezza/altezza fisica del pannello
     aspect_source: str = "sconosciuto"  # 'utente' | 'stimato' | 'predefinito'
@@ -62,6 +68,11 @@ class Track:
     green_ratio: float | None = None    # purezza del verde del pannello
     reasons: list[str] = field(default_factory=list)  # motivo per i fotogrammi falliti
     config: dict = field(default_factory=dict)
+    # Stimati dai bordi del pannello (vedi blur_estimation.py):
+    shutter: float | None = None        # frazione del tempo tra fotogrammi con otturatore aperto
+    lens_sigma: float | None = None     # sfocatura dell'immagine (gaussiana equivalente, px)
+    panel_color: dict | None = None     # modello di colore del pannello (PanelColor.to_dict)
+    version: int = TRACK_VERSION
 
     @property
     def n_frames(self) -> int:
@@ -84,10 +95,15 @@ class Track:
             "status": self.status,
             "hidden_side": None if self.hidden_side is None else [int(v) for v in self.hidden_side],
             "support": None if self.support is None else np.round(self.support, 3).tolist(),
+            "edge_width": None if self.edge_width is None else
+            [[None if np.isnan(v) else round(float(v), 3) for v in row] for row in self.edge_width],
+            "impostor": None if self.impostor is None else
+            [[None if np.isnan(v) else round(float(v), 3) for v in row] for row in self.impostor],
             "panel_luma": [None if np.isnan(v) else round(float(v), 2) for v in self.panel_luma],
             "panel_aspect": self.panel_aspect, "aspect_source": self.aspect_source,
             "focal": self.focal, "focal_reliable": self.focal_reliable,
             "green_ratio": self.green_ratio, "reasons": self.reasons, "config": self.config,
+            "shutter": self.shutter, "lens_sigma": self.lens_sigma, "panel_color": self.panel_color,
         }
         Path(path).write_text(json.dumps(data))
 
@@ -108,10 +124,16 @@ class Track:
             panel_luma=np.array([np.nan if v is None else v for v in data["panel_luma"]], float),
             hidden_side=None if data.get("hidden_side") is None else np.array(data["hidden_side"], int),
             support=None if data.get("support") is None else np.array(data["support"], float),
+            edge_width=None if data.get("edge_width") is None else
+            np.array([[np.nan if v is None else v for v in row] for row in data["edge_width"]], float),
+            impostor=None if data.get("impostor") is None else
+            np.array([[np.nan if v is None else v for v in row] for row in data["impostor"]], float),
             panel_aspect=data.get("panel_aspect"), aspect_source=data.get("aspect_source", "?"),
             focal=data.get("focal"), focal_reliable=data.get("focal_reliable", False),
             green_ratio=data.get("green_ratio"), reasons=data.get("reasons", []),
             config=data.get("config", {}),
+            shutter=data.get("shutter"), lens_sigma=data.get("lens_sigma"),
+            panel_color=data.get("panel_color"), version=int(data.get("version", 1)),
         )
 
     def summary(self) -> str:
@@ -132,6 +154,10 @@ class Track:
         valid = self.confidence[[s in (STATUS_OK, STATUS_MODEL) for s in self.status]]
         if valid.size:
             lines.append(f"Confidenza media: {valid.mean():.2f}")
+        if self.shutter is not None and self.lens_sigma is not None:
+            lines.append(f"Esposizione stimata: otturatore {360 * self.shutter:.0f}° "
+                         f"({self.shutter:.2f} del tempo tra fotogrammi); nitidezza: sfocatura "
+                         f"equivalente {self.lens_sigma:.2f} px")
         return "\n".join(lines)
 
 
@@ -181,20 +207,51 @@ class PanelModelEstimator:
         return None, "sconosciuto"
 
 
-def _predict(history: list[tuple[int, np.ndarray]], frame_idx: int, damping: float,
+def _predict(history: list[tuple[int, np.ndarray, bool]], frame_idx: int, damping: float,
              max_gap: int) -> np.ndarray | None:
-    """Predizione a velocità costante (smorzata) del quad al fotogramma corrente."""
+    """Predizione a velocità costante (smorzata) del quad al fotogramma corrente.
+
+    La velocità si usa solo se gli ultimi due fotogrammi sono stati misurati
+    su tutti i lati: un lato ricostruito può avere qualche pixel di errore e
+    la velocità lo amplificherebbe nel fotogramma successivo.
+    """
     if not history:
         return None
-    i1, q1 = history[-1]
+    i1, q1, clean1 = history[-1]
     gap = frame_idx - i1
     if gap > max_gap:
         return None
     if len(history) >= 2:
-        i2, q2 = history[-2]
-        if i1 - i2 == 1:
+        i2, q2, clean2 = history[-2]
+        if i1 - i2 == 1 and clean1 and clean2:
             return q1 + damping * (q1 - q2) * gap
     return q1.copy()
+
+
+def _update_color(color: PanelColor | None, frame: np.ndarray, quad: np.ndarray) -> PanelColor | None:
+    """Stima (o aggiorna lentamente) il colore del pannello dai pixel verdi dentro il quad.
+
+    Si usa il quad ristretto dell'8% e solo i pixel verdi (le mani no); in
+    aggiornamento si scartano i pixel lontani dal modello attuale, così una
+    pianta dietro un bordo non "trascina" il colore.
+    """
+    h, w = frame.shape[:2]
+    inner = geo.offset_quad(quad, -0.04 * float(np.linalg.norm(quad[0] - quad[2])))
+    x0, y0 = np.maximum(np.floor(inner.min(axis=0)).astype(int), 0)
+    x1, y1 = np.minimum(np.ceil(inner.max(axis=0)).astype(int) + 1, [w, h])
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return color
+    # Campionamento a griglia: bastano ~10 000 pixel.
+    step = max(1, int(np.sqrt((x1 - x0) * (y1 - y0) / 10000)))
+    roi = frame[y0:y1:step, x0:x1:step]
+    m = np.zeros(roi.shape[:2], np.uint8)
+    cv2.fillConvexPoly(m, np.round((inner - [x0, y0]) / step).astype(np.int32), 1)
+    m &= generic_green_mask(roi, 14.0, 0.16)
+    px = roi[m > 0]
+    if color is None:
+        return PanelColor.fit(px)
+    px = px[color.distance(px) < 2.0 * color.tau]
+    return color.updated(px)
 
 
 def track_frames(
@@ -210,25 +267,45 @@ def track_frames(
     """
     kp, dp, tp = cfg.key, cfg.detect, cfg.track
     est = PanelModelEstimator(image_size, cfg.render.panel_aspect)
-    history: list[tuple[int, np.ndarray]] = []
-    raws, confs, status, lumas, reasons, hidden, supports = [], [], [], [], [], [], []
+    history: list[tuple[int, np.ndarray, bool]] = []   # (indice, quad, misurato su tutti i lati)
+    last_clean: tuple[int, np.ndarray] | None = None
+    raws, confs, status, lumas, reasons, hidden, supports, widths = [], [], [], [], [], [], [], []
+    impostors: list[np.ndarray] = []
     green_ratio: float | None = None
+    color: PanelColor | None = None      # modello del colore del pannello (stimato al primo aggancio)
     last_quad: np.ndarray | None = None
     lost = 0
 
     for i, frame in enumerate(frames):
         pred = _predict(history, i, tp.velocity_damping, tp.max_lost)
+        motion = 0.0
+        if len(history) >= 2 and history[-1][0] - history[-2][0] == 1:
+            motion = float(np.linalg.norm(history[-1][1] - history[-2][1], axis=1).max())
         diag: dict = {}
         det = None
+        # Riferimento per le proporzioni dei lati nascosti: l'ultimo quad
+        # misurato su tutti i lati, se recente.
+        ref = last_clean[1] if last_clean is not None and i - last_clean[0] <= 3 * tp.max_lost else None
         if pred is not None:
-            det = detect_quad(frame, kp, dp, prior=pred, green_ratio=green_ratio, diag=diag)
+            det = detect_quad(frame, kp, dp, prior=pred, green_ratio=green_ratio, diag=diag,
+                              motion_px=motion, color=color, reference=ref)
         if det is None:
             # Recupero: ricerca su tutto il fotogramma, senza predizione.
-            det = detect_quad(frame, kp, dp, prior=None, green_ratio=green_ratio, diag=diag)
+            det = detect_quad(frame, kp, dp, prior=None, green_ratio=green_ratio, diag=diag,
+                              motion_px=motion, color=color)
+        if det is None and color is not None and lost >= 2:
+            # Il colore del pannello potrebbe essere cambiato (luce diversa):
+            # nuova ricerca tra tutti i verdi presenti.
+            det = detect_quad(frame, kp, dp, prior=None, diag=diag, motion_px=motion)
 
         if det is not None:
-            ref = pred if pred is not None else last_quad
-            quad = geo.align_to_reference(det.quad, ref) if ref is not None else geo.order_quad(det.quad)
+            if det.color is not None and det.color is not color:
+                color = det.color
+            if det.confidence > 0.5 and (color is None or i % 5 == 0):
+                color = _update_color(color, frame, det.quad)
+            align = pred if pred is not None else last_quad
+            quad = geo.align_to_reference(det.quad, align) if align is not None else geo.order_quad(det.quad)
+            clean = bool(det.measured.all()) and not det.completed
             raws.append(quad)
             confs.append(det.confidence)
             status.append(STATUS_MODEL if det.completed else STATUS_OK)
@@ -236,7 +313,11 @@ def track_frames(
             reasons.append("")
             hidden.append(det.completed[0] if det.completed else -1)
             supports.append(np.where(det.measured, det.support, 0.0))
-            history = (history + [(i, quad)])[-3:]
+            widths.append(np.where(det.measured, det.edge_width, np.nan))
+            impostors.append(det.impostor)
+            history = (history + [(i, quad, clean)])[-3:]
+            if clean:
+                last_clean = (i, quad)
             last_quad = quad
             lost = 0
             est.add(quad, det)
@@ -249,12 +330,14 @@ def track_frames(
             lumas.append(np.nan)
             hidden.append(-1)
             supports.append(np.zeros(4))
+            widths.append(np.full(4, np.nan))
+            impostors.append(np.full(4, np.nan))
             if pred is not None and lost <= tp.max_lost:
                 # Breve perdita: posizione prevista (verrà rifinita dallo smoothing).
                 raws.append(pred)
                 confs.append(0.0)
                 status.append(STATUS_PREDICTED)
-                history = (history + [(i, pred)])[-3:]
+                history = (history + [(i, pred, False)])[-3:]
             else:
                 raws.append(np.full((4, 2), np.nan))
                 confs.append(0.0)
@@ -283,6 +366,9 @@ def track_frames(
         panel_luma=np.array(lumas, dtype=np.float64),
         hidden_side=np.array(hidden, dtype=int),
         support=np.array(supports, dtype=np.float64).reshape(-1, 4),
+        edge_width=np.array(widths, dtype=np.float64).reshape(-1, 4),
+        impostor=np.array(impostors, dtype=np.float64).reshape(-1, 4),
+        panel_color=None if color is None else color.to_dict(),
         panel_aspect=aspect, aspect_source=source,
         focal=focal, focal_reliable=f_ok,
         green_ratio=green_ratio,

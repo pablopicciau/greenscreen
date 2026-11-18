@@ -5,4 +5,4 @@ Sostituisce automaticamente la superficie verde di un quadro tenuto in mano
 primo piano. Vedi README.md e docs/ANALISI_TECNICA.md.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

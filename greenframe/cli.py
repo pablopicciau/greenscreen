@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .config import Config
 from .geometry import parse_aspect
-from .tracker import Track
+from .tracker import TRACK_VERSION, Track
 
 
 def _default_track_path(video: str) -> str:
@@ -36,6 +36,8 @@ def _add_common(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--track", help="file della traccia (default: <video>.track.json)")
     ap.add_argument("--aspect", help="proporzioni del pannello LxA, es. 40x50, 4:5 o 0.8 "
                                      "(default: stimate dal video)")
+    ap.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto",
+                    help="calcolo su GPU NVIDIA (cuda), CPU o automatico (default)")
     ap.add_argument("--quiet", action="store_true", help="niente barra di avanzamento")
 
 
@@ -44,10 +46,17 @@ def _add_render_opts(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--mode", choices=["fill", "fit", "stretch"], default="fill",
                     help="fill = riempi (ritaglia), fit = adatta (bande), stretch = deforma")
     ap.add_argument("--fit-bg", default="blur", help="sfondo bande in modalità fit: blur, white, black, #rrggbb")
-    ap.add_argument("--lighting", type=float, default=None, help="trasferimento luce 0-1 (default 0.7)")
+    ap.add_argument("--lighting", type=float, default=None,
+                    help="trasferimento di luce e ombre 0-1 (default 1 = come il pannello)")
     ap.add_argument("--grain", type=float, default=None, help="grana della camera sull'immagine 0-1 (default 1)")
-    ap.add_argument("--codec", choices=["libx264", "h264_nvenc"], default="libx264",
-                    help="libx264 = qualità massima (CPU), h264_nvenc = veloce (GPU NVIDIA)")
+    ap.add_argument("--shutter", default="auto",
+                    help="otturatore in gradi per il motion blur (es. 180) o 'auto' = stimato dal video")
+    ap.add_argument("--no-motion-blur", action="store_true", help="niente sfocatura di movimento sul quadro")
+    ap.add_argument("--lens-blur", default="auto",
+                    help="sfocatura (px) del quadro per eguagliare la nitidezza della camera; "
+                         "'auto' = stimata dal video, 0 = nessuna")
+    ap.add_argument("--codec", choices=["libx264", "h264_nvenc", "hevc_nvenc", "libx265"], default="libx264",
+                    help="libx264 = qualità massima (CPU); h264_nvenc/hevc_nvenc = GPU NVIDIA, più veloce")
     ap.add_argument("--crf", type=int, default=None, help="qualità (più basso = migliore, default 17)")
     ap.add_argument("--no-audio", action="store_true", help="non copiare l'audio originale")
 
@@ -57,6 +66,7 @@ def build_config(args: argparse.Namespace) -> Config:
     cfg = Config()
     if getattr(args, "aspect", None):
         cfg.render.panel_aspect = parse_aspect(args.aspect)
+    cfg.render.device = getattr(args, "device", "auto")
     if hasattr(args, "mode"):
         cfg.render.mode = args.mode
         cfg.render.fit_background = args.fit_bg
@@ -64,9 +74,14 @@ def build_config(args: argparse.Namespace) -> Config:
             cfg.render.lighting = args.lighting
         if args.grain is not None:
             cfg.render.grain = args.grain
+        if str(args.shutter).lower() != "auto":
+            cfg.render.shutter = min(max(float(args.shutter) / 360.0, 0.0), 1.0)
+        cfg.render.motion_blur = not args.no_motion_blur
+        if str(args.lens_blur).lower() != "auto":
+            cfg.render.lens_blur = max(float(args.lens_blur), 0.0)
         cfg.encode.codec = args.codec
-        if args.codec == "h264_nvenc":
-            cfg.encode.preset = "p6"
+        if args.codec.endswith("_nvenc"):
+            cfg.encode.preset = "p7"
         if args.crf is not None:
             cfg.encode.crf = args.crf
         cfg.encode.keep_audio = not args.no_audio
@@ -129,11 +144,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd in ("run", "esegui"):
             track = pipeline.analyze(args.video, cfg, track_path, args.debug_video, show_progress=show)
         else:
-            if not Path(track_path).exists():
+            track = Track.load(track_path) if Path(track_path).exists() else None
+            if track is None:
                 print(f"Traccia non trovata ({track_path}): eseguo prima l'analisi.")
+            elif track.version < TRACK_VERSION:
+                print("Traccia creata da una versione precedente del programma: rifaccio l'analisi.")
+                track = None
+            if track is None:
                 track = pipeline.analyze(args.video, cfg, track_path, show_progress=show)
-            else:
-                track = Track.load(track_path)
 
         if args.cmd in ("preview", "anteprima"):
             pipeline.preview(args.video, track, args.image, args.frame, args.out, cfg)

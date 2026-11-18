@@ -9,17 +9,14 @@ video o indicate dall'utente) prima della proiezione prospettica:
   sfocata dell'immagine stessa (stile Instagram) o da un colore;
 * ``stretch``: deforma (solo se l'utente lo chiede esplicitamente).
 
-Poi si costruisce una piramide di versioni ridotte (mipmap): ad ogni
-fotogramma si sceglie il livello con risoluzione appena superiore a quella
-del quad, così la riduzione prospettica non produce aliasing/moiré.
+La piramide (mipmap) in luce lineare e il campionamento anti-aliasing sono
+in ``render.py`` (sulla GPU).
 """
 
 from __future__ import annotations
 
 import cv2
 import numpy as np
-
-from .geometry import side_lengths
 
 
 def _parse_color(text: str) -> tuple[int, int, int]:
@@ -74,33 +71,6 @@ def fit_to_aspect(img: np.ndarray, aspect: float, mode: str = "fill",
     y0, x0 = (ch - h) // 2, (cw - w) // 2
     canvas[y0:y0 + h, x0:x0 + w] = img
     return canvas
-
-
-class SourcePyramid:
-    """Immagine sorgente in più risoluzioni (fattore 2 tra livelli)."""
-
-    def __init__(self, img: np.ndarray, max_side: int = 3000):
-        # Limita la risoluzione massima: oltre è solo memoria sprecata
-        # (il quadro nel video raramente supera i 1500 px).
-        scale = min(1.0, max_side / max(img.shape[:2]))
-        if scale < 1.0:
-            img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-        self.levels = [img]
-        while min(self.levels[-1].shape[:2]) > 32:
-            self.levels.append(cv2.pyrDown(self.levels[-1]))
-
-    def level_for(self, quad: np.ndarray) -> np.ndarray:
-        """Livello più piccolo che ha ancora almeno la risoluzione del quad."""
-        lens = side_lengths(quad)
-        need_w = max(lens[0], lens[2])     # alto, basso
-        need_h = max(lens[1], lens[3])     # destra, sinistra
-        chosen = self.levels[0]
-        for lvl in self.levels:
-            if lvl.shape[1] >= need_w and lvl.shape[0] >= need_h:
-                chosen = lvl
-            else:
-                break
-        return chosen
 
 
 def load_image(path: str) -> np.ndarray:

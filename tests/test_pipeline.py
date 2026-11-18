@@ -37,12 +37,18 @@ def test_analyze_accuracy(synthetic):
     assert track.n_frames == gt["frames"]
     err = np.linalg.norm(track.smooth - truth, axis=2)
     assert not np.isnan(err).any()
-    assert err.mean() < 1.2
-    assert err.max() < 4.0
-    assert track.panel_aspect == pytest.approx(0.8, rel=0.03)
+    assert err.mean() < 0.4
+    assert err.max() < 1.5
+    assert track.panel_aspect == pytest.approx(0.8, rel=0.01)
+    # Nitidezza ed esposizione stimate dai bordi, modello di colore del pannello.
+    assert track.lens_sigma is not None and 0.5 < track.lens_sigma < 2.0
+    assert track.shutter is not None and 0.0 <= track.shutter <= 1.0
+    assert track.panel_color is not None
     # La traccia salvata si ricarica identica.
     loaded = Track.load(d / "t.json")
     assert np.allclose(loaded.smooth, track.smooth, atol=1e-3)
+    assert loaded.shutter == track.shutter and loaded.panel_color == track.panel_color
+    assert np.allclose(loaded.edge_width, track.edge_width, atol=1e-3, equal_nan=True)
 
 
 def test_render_output(synthetic):
@@ -56,10 +62,12 @@ def test_render_output(synthetic):
     ok, frame = cap.read()
     assert ok and frame.shape[:2] == (640, 360)
     assert n == gt["frames"]
-    # L'audio originale è stato copiato.
-    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
+    # L'audio originale è stato copiato; colore e crominanza dichiarati.
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                            "stream=codec_type,chroma_location,color_space",
                             "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout
     assert "audio" in probe
+    assert "left" in probe and "bt709" in probe
     # Dentro il quadro non resta verde.
     q = np.round(track.smooth[0]).astype(np.int32)
     mask = np.zeros(frame.shape[:2], np.uint8)

@@ -2,15 +2,29 @@
 
 Sostituisce automaticamente un **pannello verde tenuto in mano** in un video con
 l'immagine di un tuo quadro: l'immagine segue la prospettiva del pannello
-mentre lo giri e lo inclini, le **mani restano in primo piano**, la luce e le
-ombre della scena vengono trasferite sul quadro. Pensato per Reel Instagram
-da 15 secondi.
+mentre lo giri e lo inclini, le **mani restano in primo piano**, la luce, le
+ombre, la nitidezza e la **sfocatura di movimento** della scena vengono
+trasferite sul quadro. Pensato per Reel Instagram da 15 secondi.
 
 * Funziona **in locale e offline**, senza abbonamenti né API a pagamento.
-* Gira su **CPU** (OpenCV + NumPy); la GPU NVIDIA è usata solo, se vuoi, per
-  la codifica video (NVENC).
-* Si analizza il video **una volta** e poi si generano in pochi secondi tanti
-  Reel quanti sono i quadri da promuovere.
+* Usa la **GPU NVIDIA** (PyTorch + CUDA) per colore, chiave e compositing;
+  senza GPU lo stesso codice gira sulla CPU, più lentamente.
+* Si analizza il video **una volta** e poi si generano tanti Reel quanti sono
+  i quadri da promuovere.
+
+Novità della versione 0.2 (dettagli e misure in `docs/ANALISI_TECNICA.md`):
+
+* **precisione delle linee 6 volte migliore** (errore medio sugli angoli da
+  ~1 px a 0.16 px): colore letto nel formato nativo del video, con la
+  crominanza nella posizione giusta, e bordi misurati in luce lineare;
+* **motion blur** sul quadro, con il tempo di esposizione stimato dal video;
+* nitidezza e grana uguali a quelle della camera, bordi delle dita esatti
+  (modello a due colori), compositing in luce lineare sulla GPU;
+* risolti i limiti noti: **verde saturo vicino al pannello** e **oggetto con
+  bordo dritto** davanti a un lato; HDR convertito sulla GPU e testato;
+* un **lato coperto per secondi** mentre inclini il pannello viene
+  ricostruito dalla geometria degli altri tre lati (errore da 41 a ~2-3 px);
+* memoria sotto controllo: ~3 GB di RAM per il rendering di un Reel Full HD.
 
 Documentazione:
 
@@ -21,7 +35,7 @@ Documentazione:
 
 ## Installazione (Windows)
 
-1. **Python 3.10 o superiore** da <https://www.python.org/downloads/>
+1. **Python 3.11-3.13** da <https://www.python.org/downloads/>
    (durante l'installazione spunta *Add python.exe to PATH*).
 2. **FFmpeg**: apri PowerShell e scrivi
 
@@ -29,23 +43,32 @@ Documentazione:
    winget install Gyan.FFmpeg
    ```
 
-   poi chiudi e riapri PowerShell (in alternativa basta il pacchetto
-   `imageio-ffmpeg` installato al punto 3).
-3. Nella cartella del progetto crea un ambiente virtuale e installa le dipendenze:
+   poi chiudi e riapri PowerShell.
+3. Nella cartella del progetto crea un ambiente virtuale e attivalo:
 
    ```bash
-   python -m venv .venv
+   py -3.13 -m venv .venv
    ```
 
    ```bash
    .venv\Scripts\activate
    ```
 
+4. **PyTorch con CUDA** (per la GPU NVIDIA; ~3 GB). Con driver NVIDIA recenti:
+
+   ```bash
+   pip install torch --index-url https://download.pytorch.org/whl/cu132
+   ```
+
+   Con driver più vecchi usa `cu130` o `cu128` al posto di `cu132`. Senza GPU
+   NVIDIA basta `pip install torch`.
+5. Le altre dipendenze:
+
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Verifica che tutto funzioni (crea video sintetici e controlla la precisione):
+6. Verifica che tutto funzioni (crea video sintetici e controlla la precisione):
 
    ```bash
    python -m pytest
@@ -82,66 +105,85 @@ Opzioni principali:
 | `--aspect 40x50` | proporzioni reali del pannello (consigliato se le conosci; altrimenti vengono stimate dal video) |
 | `--mode fill` / `fit` / `stretch` | riempi (ritaglia l'immagine), adatta (bande ai lati), deforma (sconsigliato) |
 | `--fit-bg blur` | sfondo delle bande in modalità `fit`: `blur`, `white`, `black`, `#rrggbb` |
-| `--lighting 0.7` | quanto la luce del pannello si trasferisce sul quadro (0 = per niente) |
+| `--lighting 1` | quanto luce e ombre del pannello si trasferiscono sul quadro (0 = per niente, 1 = come nella realtà) |
 | `--grain 1` | quanta grana della camera viene riportata sul quadro |
-| `--codec h264_nvenc` | codifica sulla GPU NVIDIA (più veloce); default `libx264` (qualità massima) |
+| `--shutter auto` | otturatore in gradi per il motion blur (`auto` = stimato dal video, es. `180`) |
+| `--no-motion-blur` | niente sfocatura di movimento sul quadro |
+| `--lens-blur auto` | sfocatura (px) del quadro per eguagliare la nitidezza della camera (`auto` = stimata, `0` = nessuna) |
+| `--device auto` | `cuda` (GPU NVIDIA), `cpu` o `auto` |
+| `--codec libx264` | `libx264` (qualità massima), `h264_nvenc` / `hevc_nvenc` (GPU NVIDIA, più veloce), `libx265` |
 | `--crf 17` | qualità di codifica (più basso = migliore e più pesante) |
 | `--no-audio` | non copiare l'audio originale |
 | `--debug-video file.mp4` | video con il contorno del tracking: verde = misurato, arancio = lato ricostruito, rosso = perso |
 
 L'analisi salva la traccia in `ripresa.track.json` accanto al video: i comandi
-`render` e `preview` la riusano automaticamente.
+`render` e `preview` la riusano automaticamente (una traccia creata da una
+versione precedente viene rifatta).
 
 ## Come funziona (in breve)
 
-1. **Rilevamento**: la "differenza di verde" `G − max(R,B)` individua il
-   pannello; i suoi 4 lati vengono stimati con un RANSAC robusto sui tratti
-   visibili e rifiniti al sub-pixel; gli angoli sono le intersezioni dei lati,
-   quindi un angolo coperto da una mano viene comunque ricostruito.
-2. **Tracking**: il quad viene ri-misurato in ogni fotogramma, guidato dalla
-   posizione prevista dal movimento; i lati completamente nascosti vengono
-   ricostruiti dagli altri tre.
-3. **Smoothing offline**: regressione locale robusta sulle traiettorie degli
-   angoli (niente tremolio, niente ritardo).
-4. **Compositing**: l'immagine (alle proporzioni del pannello, mai deformata)
-   viene proiettata con un'omografia; una chiave morbida mantiene le mani
-   davanti; luce, ombre e grana della camera vengono trasferite sull'immagine.
+1. **Colore**: FFmpeg decodifica il video senza convertirlo; la GPU ricostruisce
+   il colore rispettando la posizione dei campioni di crominanza 4:2:0.
+2. **Rilevamento**: il pannello viene trovato per colore (il programma impara
+   la tinta esatta del tuo pannello, così distingue altri verdi); i 4 lati
+   sono stimati con un RANSAC robusto sui tratti visibili e rifiniti al
+   sub-pixel **in luce lineare**; gli angoli sono le intersezioni dei lati,
+   quindi un angolo coperto da una mano viene comunque ricostruito. Un lato
+   coperto da un oggetto dritto viene riconosciuto (il suo bordo prosegue
+   oltre gli angoli) e ricostruito dagli altri tre.
+3. **Smoothing offline**: controllo di coerenza delle proporzioni, lati
+   nascosti ricostruiti combinando l'interpolazione nel tempo con la
+   geometria del rettangolo vista in ogni fotogramma, regressione locale
+   robusta delle traiettorie (niente tremolio, niente ritardo; le misure
+   sbagliate isolate vengono scartate). Dai bordi si stimano anche la
+   nitidezza della camera e il tempo di esposizione.
+4. **Rendering (GPU)**: il quadro (alle proporzioni del pannello, mai
+   deformato) viene proiettato con anti-aliasing e motion blur; la chiave a
+   due colori mantiene le mani davanti con bordi esatti; luce, ombre, grana e
+   nitidezza della scena vengono trasferite sul quadro; tutto in luce lineare.
+   Fuori dal quadro i pixel restano quelli originali.
 
 ## Prestazioni
 
-Misurate su un Reel sintetico Full HD verticale (1080×1920, 15 s, 450
-fotogrammi) con verità di riferimento, su una macchina cloud con 4 core CPU e
-**senza GPU** (su un PC con più core i tempi scendono):
+Misurate su Reel di prova Full HD verticali da 15 s (1080×1920, 30 fps),
+generati con la posizione vera del pannello, su un portatile con i7-9750H e
+RTX 2060 (6 GB). Quattro scene: mani e lati coperti, oggetto dritto davanti a
+un lato, pianta verde attaccata al pannello, movimento veloce. Dettagli in
+[`docs/ANALISI_TECNICA.md`](docs/ANALISI_TECNICA.md) (sezione 6).
 
-| Misura | Risultato |
-|---|---|
-| Analisi (tracking + smoothing) | 30 s |
-| Rendering + codifica x264 "slow" | 47 s (con `--codec h264_nvenc` la codifica passa alla GPU) |
-| Errore medio sugli angoli, mani ai lati | 0.58 px (massimo 2.1 px) |
-| Errore medio, un angolo coperto da un braccio | 0.78 px (massimo 2.7 px) |
-| Errore medio, lato coperto da un oggetto | 1.2 px (massimo 7.8 px) |
-| Tremolio dell'immagine inserita | 0.07 px |
-| Rapporto d'aspetto stimato dal video | 0.8000 (vero 0.800) |
+| | Versione originale | Versione attuale |
+|---|---|---|
+| Errore medio sugli angoli | 1,6-7,4 px (383 px con la pianta verde) | **0,16-0,26 px** |
+| Errore massimo nell'intero video | 7,6-200 px (1383 px con la pianta) | **1,3-2,7 px** |
+| Fedeltà al "composito perfetto" (PSNR) | 10-21 dB | **35 dB** |
+| Analisi di un Reel da 15 s | 51-77 s | **27-31 s** |
+| Rendering di un quadro, con codifica | 88-104 s | **38-41 s** |
 
-Dettagli e confronto delle alternative in `docs/ANALISI_TECNICA.md`.
+In pratica: l'analisi richiede circa mezzo minuto e ogni versione con un
+quadro diverso circa 40 secondi. Durante il rendering il programma usa circa
+3 GB di RAM.
 
 ## Struttura del progetto
 
 ```
 greenframe/           pacchetto Python
+  color.py            luce lineare, YUV <-> RGB, posizione della crominanza
+  device.py           scelta GPU/CPU
   geometry.py         rette, omografie, proporzioni
-  keyer.py            chiave cromatica, screen plate, despill
+  keyer.py            verde generico e modello di colore del pannello
   detector.py         quad in un singolo fotogramma
   tracker.py          tracking temporale e traccia JSON
-  smoothing.py        smoothing robusto offline
-  image_fit.py        fill/fit, piramide, caricamento immagini
-  compositor.py       inserimento e compositing
-  video_io.py         FFmpeg (lettura/scrittura), metadati
+  smoothing.py        coerenza, lati nascosti, smoothing robusto offline
+  blur_estimation.py  nitidezza e tempo di esposizione dai bordi
+  render.py           rendering su GPU (chiave, quadro, motion blur, compositing)
+  image_fit.py        fill/fit, caricamento immagini
+  video_io.py         FFmpeg (piani YUV, HDR, encoder), metadati
   pipeline.py         analisi, rendering, anteprima, debug
   cli.py              riga di comando
 tools/
   make_synthetic_video.py   video di prova con verità di riferimento
   make_test_painting.py     immagini di prova
+  benchmark.py              precisione e qualità rispetto al composito perfetto
 tests/                test automatici (pytest)
 docs/                 analisi tecnica e guida alle riprese
 ```
@@ -149,13 +191,12 @@ docs/                 analisi tecnica e guida alle riprese
 ## Limiti noti
 
 * Pannello **bianco** non supportato (serve il verde: vedi l'analisi tecnica).
-* Un oggetto con un **bordo dritto** che copre un **intero lato** del pannello
-  può essere scambiato per il bordo vero: il quadro risulta un po' deformato
-  finché l'oggetto è davanti (fino a ~30 px nei test). Dita, mani e oggetti
-  irregolari sono invece gestiti.
-* Verdi saturi nello sfondo **a contatto** con il pannello possono disturbare
-  il rilevamento.
-* Con movimenti molto rapidi l'immagine inserita resta più nitida della scena
-  (manca ancora il motion blur sintetico).
-* Finora testato su video sintetici: il prossimo passo è la prova su riprese
-  reali.
+* Un verde **identico** a quello del pannello attaccato al pannello stesso non
+  può essere separato per colore.
+* Il quadro inserito è piano: un pannello che si flette (cartoncino sottile)
+  avrà bordi leggermente curvi che il quadro non segue.
+* Un lato coperto viene ricostruito dagli altri tre; con **due lati coperti
+  insieme** la posizione si può solo prevedere dal movimento (per pochi
+  fotogrammi va bene, a lungo no).
+* Finora testato su video sintetici (fisicamente realistici): il prossimo
+  passo è la prova su riprese reali.

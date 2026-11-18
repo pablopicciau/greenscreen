@@ -1,9 +1,14 @@
 # Dipendenze obbligatorie (tutte open source, funzionano offline).
 numpy>=1.24
-# OpenCV con i moduli "contrib" (ArUco/AprilTag inclusi). Su un PC desktop la
-# versione con interfaccia grafica va bene; su server si può usare la variante
-# "-headless". Non installare insieme più varianti di opencv-python.
+scipy>=1.10
+# OpenCV con i moduli "contrib". Su un PC desktop la versione con interfaccia
+# grafica va bene; su server si può usare la variante "-headless". Non
+# installare insieme più varianti di opencv-python.
 opencv-contrib-python>=4.8
+# PyTorch: calcolo per-pixel sulla GPU NVIDIA (o sulla CPU se manca).
+# Per la GPU va installato PRIMA, dall'indice con CUDA (vedi README):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu132
+torch>=2.4
 
 # FFmpeg: serve l'eseguibile. Su Windows il modo più semplice è
 #   winget install Gyan.FFmpeg
@@ -12,3 +17,4 @@ imageio-ffmpeg>=0.5
 
 # Solo per lo sviluppo / i test:
 pytest>=7
+pillow>=10

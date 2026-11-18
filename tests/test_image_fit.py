@@ -1,9 +1,9 @@
-"""Test della preparazione dell'immagine (proporzioni, EXIF, piramide)."""
+"""Test della preparazione dell'immagine (proporzioni, EXIF)."""
 
 import numpy as np
 import pytest
 
-from greenframe.image_fit import SourcePyramid, fit_to_aspect, load_image
+from greenframe.image_fit import fit_to_aspect, load_image
 
 
 def test_fill_crops_to_aspect():
@@ -18,15 +18,6 @@ def test_fit_adds_bands_without_distortion():
     assert out.shape[:2] == (1250, 1000)
     # L'immagine originale è intatta al centro, le bande sono bianche.
     assert (out[125:1125] == 200).all() and (out[:100] == 255).all()
-
-
-def test_pyramid_level_choice():
-    pyr = SourcePyramid(np.zeros((2000, 1600, 3), np.uint8))
-    quad = np.array([[0, 0], [390.0, 0], [390.0, 490.0], [0, 490.0]])
-    lvl = pyr.level_for(quad)
-    # Il livello scelto è il più piccolo con risoluzione >= a quella del quad.
-    assert lvl.shape[1] >= 390 and lvl.shape[0] >= 490
-    assert lvl.shape[1] < 2 * 390 + 2
 
 
 def test_exif_orientation_is_applied(tmp_path):

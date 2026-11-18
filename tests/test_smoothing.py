@@ -82,3 +82,56 @@ def test_consistency_check_fixes_impostor_side():
     # sparge solo un poco l'errore sui vicini immediati).
     assert err[:36].max() < 0.5 and err[56:].max() < 0.5
     assert err.max() < 3.0
+
+
+def test_long_occlusion_follows_tilt():
+    """Lato inferiore coperto per 1.5 s mentre il pannello si inclina.
+
+    Stesso movimento del benchmark Full HD "standard". La sola interpolazione
+    nel tempo sbaglia di ~40 px a metà occlusione (non sa che il pannello si
+    inclina e poi torna); con la geometria del rettangolo, ricostruita in ogni
+    fotogramma dai tre lati visibili e pesata con la sua incertezza, l'errore
+    resta sotto i 2 px. Un fotogramma in cui il rilevamento indica il lato
+    sbagliato viene ricostruito dai vicini.
+    """
+    from greenframe import geometry as geo
+    from greenframe.tracker import STATUS_MODEL
+    from make_synthetic_video import Scene
+
+    W, H, fps = 1080, 1920, 30.0
+    focal = 0.6 * float(np.hypot(W, H))
+    scene = Scene(W, H, 15.0, 0.4, 0.5, focal, set(), seed=7)
+    T = 450
+    truth = np.array([scene.corners_at(i / fps) for i in range(T)])
+    rng = np.random.default_rng(0)
+    raw = truth + rng.normal(0, 0.1, truth.shape)          # misura sub-pixel
+    hidden = np.full(T, -1)
+    status = [STATUS_OK] * T
+    support = np.full((T, 4), 0.95)
+    occl = range(316, 360)
+    for i in occl:
+        # Come il tracking: lati visibili misurati, angoli in basso posti con
+        # le proporzioni dell'ultimo fotogramma pulito (che non segue l'inclinazione).
+        raw[i] = geo.complete_by_ratio(geo.quad_lines(raw[i]), 2, raw[315])
+        hidden[i], status[i], support[i, 2] = 2, STATUS_MODEL, 0.0
+    # Fotogramma con il lato sbagliato: il bordo dell'oggetto preso per il lato
+    # inferiore e il lato destro "ricostruito".
+    raw[330, 2] = truth[330, 1] + 0.9 * (truth[330, 2] - truth[330, 1])
+    raw[330, 3] = truth[330, 0] + 0.9 * (truth[330, 3] - truth[330, 0])
+    raw[330, 2, 0] += 25.0
+    hidden[330] = 1
+
+    def run(with_geometry: bool) -> np.ndarray:
+        track = Track(width=W, height=H, fps=fps, raw=raw.copy(), confidence=np.full(T, 0.9),
+                      status=list(status), panel_luma=np.full(T, 150.0), hidden_side=hidden.copy(),
+                      support=support.copy(), panel_aspect=0.8,
+                      focal=focal if with_geometry else None, focal_reliable=with_geometry)
+        sm = smooth_track(track)
+        return np.linalg.norm(sm - truth, axis=2)
+
+    err_time_only = run(False)
+    err = run(True)
+    assert err_time_only[list(occl)].max() > 20.0
+    assert err[list(occl)].max() < 2.0
+    assert err[list(occl)].mean() < 0.6
+    assert err[:300].max() < 0.5 and err[375:].max() < 0.5
