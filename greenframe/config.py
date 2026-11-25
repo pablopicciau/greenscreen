@@ -129,6 +129,12 @@ class RenderParams:
     lens_blur: float | None = None
     # Numero massimo di istanti per il motion blur (GPU; sulla CPU al massimo 6).
     motion_samples: int = 16
+    # Sostituisce le piccole zone non verdi completamente interne al pannello
+    # (marcatori di tracking a croce, macchie, piccoli riflessi). Le mani non
+    # sono coinvolte: entrano sempre dal bordo del pannello.
+    remove_markers: bool = True
+    # Area massima di un "marcatore", in frazione dell'area del quad.
+    marker_max_area: float = 0.01
 
 
 @dataclass

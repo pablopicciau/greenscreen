@@ -241,9 +241,33 @@ class YuvFrame:
         return self.y.tobytes() + self.u.tobytes() + self.v.tobytes()
 
 
+@functools.lru_cache(maxsize=None)
+def _libplacebo_works() -> bool:
+    """True se libplacebo è presente E un dispositivo Vulkan si inizializza davvero.
+
+    Avere il filtro compilato in FFmpeg non basta: senza driver Vulkan
+    funzionanti (driver assente o incompatibile, desktop remoto, alcuni
+    portatili) FFmpeg termina subito con errore e il video HDR non verrebbe
+    letto affatto. Si prova quindi una conversione minima, una volta sola.
+    """
+    if not has_filter("libplacebo"):
+        return False
+    ff = find_ffmpeg()
+    if ff is None:
+        return False
+    try:
+        res = subprocess.run(
+            [ff, "-v", "error", "-init_hw_device", "vulkan", "-f", "lavfi",
+             "-i", "color=c=gray:s=16x16:d=0.04", "-vf", "libplacebo", "-f", "null", "-"],
+            capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return res.returncode == 0
+
+
 def _hdr_filter() -> str | None:
     """Catena di filtri FFmpeg HDR -> SDR BT.709 (YUV 4:4:4), o None se non disponibile."""
-    if has_filter("libplacebo"):
+    if _libplacebo_works():
         # Tone mapping BT.2390 sulla GPU (Vulkan); applica anche i metadati Dolby Vision.
         return ("libplacebo=tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:"
                 "color_trc=bt709:range=tv:format=yuv444p")

@@ -157,3 +157,27 @@ def test_nan_quad_passthrough(device):
     yuv = to_yuv(frame)
     res = rend.render(yuv, 1)
     assert res.y is yuv.y and res.u is yuv.u
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_markers_removed_but_hand_kept(device):
+    """Marcatori di tracking a croce sul pannello: sostituiti come il pannello.
+
+    Caso reale (schermi verdi con crocette nere): senza la rimozione le
+    crocette restano visibili sopra il quadro. La mano, che entra dal bordo,
+    non deve essere toccata; con l'opzione disattivata la crocetta resta.
+    """
+    frame, quad = base_frame()
+    cv2.line(frame, (190, 140), (210, 140), (20, 20, 20), 3)       # crocetta nera
+    cv2.line(frame, (200, 130), (200, 150), (20, 20, 20), 3)
+    track = make_track([quad] * 3, frame[60:120, 230:290].reshape(-1, 3))
+    red = np.zeros((500, 500, 3), np.uint8)
+    red[:] = (0, 0, 255)
+    cfg = config()
+    out = Renderer(red, track, cfg, torch.device(device), YuvFormat()).render(to_yuv(frame), 1, want_bgr=True).bgr
+    patch = out[132:149, 192:209].astype(int)
+    assert np.abs(patch - [0, 0, 255]).max() <= 25                  # niente crocetta né alone scuro
+    assert np.abs(out[150, 115].astype(int) - SKIN).max() <= 4      # la mano resta
+    cfg.render.remove_markers = False
+    out2 = Renderer(red, track, cfg, torch.device(device), YuvFormat()).render(to_yuv(frame), 1, want_bgr=True).bgr
+    assert out2[140, 200].max() < 90                                # crocetta ancora visibile

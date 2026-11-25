@@ -33,7 +33,9 @@ Per ogni fotogramma, su un ritaglio (ROI) attorno al quadro:
    che si gira verso la luce).
 6. **Composizione** in luce lineare: ``O = I + alpha·(R - P)``, esatta nei
    pixel misti; **despill** del riflesso verde sulle mani vicino al pannello;
-   **grana** della camera (luminanza residua del pannello) riportata sul quadro.
+   **grana** della camera (luminanza residua del pannello) riportata sul quadro;
+   **marcatori** di tracking, macchie e piccoli riflessi interni al pannello
+   (isole non verdi che non toccano il bordo) sostituiti come il pannello.
 7. Uscita in YUV 4:2:0: i pixel non toccati conservano i valori originali
    (nessuna perdita fuori dal quadro).
 """
@@ -176,6 +178,48 @@ def _convex_inside_distance(poly: np.ndarray, x, y):
 # ---------------------------------------------------------------------------
 # Texture del quadro
 # ---------------------------------------------------------------------------
+
+
+def marker_mask(occluder: np.ndarray, inner: np.ndarray, max_area: float,
+                dilate_px: int = 3) -> np.ndarray:
+    """Maschera (float32 0-1) delle piccole "isole" non verdi interne al pannello.
+
+    Marcatori di tracking (crocette), macchie, piccoli riflessi sono zone non
+    pannello piccole e **completamente circondate** dal pannello. Una mano o un
+    dito invece entra sempre dal bordo del pannello, quindi tocca il contorno
+    della zona interna e viene lasciato com'è. Le isole trovate vengono
+    dilatate di qualche pixel per coprire anche il loro bordo sfumato.
+
+    Verificato su un video reale con crocette nere sullo schermo verde: senza
+    questa regola le crocette restano visibili sopra il quadro inserito.
+    (Limite: una crocetta toccata da un dito si unisce al dito e resta.)
+
+    Parametri
+    ---------
+    occluder: maschera booleana (H, W) dei pixel non-pannello.
+    inner: maschera booleana (H, W) dell'interno del quad.
+    max_area: area massima (pixel) di un'isola per essere considerata marcatore.
+    """
+    import cv2
+
+    occ = (occluder & inner).astype(np.uint8)
+    out = np.zeros(occ.shape, np.float32)
+    if not occ.any():
+        return out
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(occ, connectivity=8)
+    # Anello sul bordo della zona interna: chi lo tocca viene da fuori (mani).
+    inner_u8 = inner.astype(np.uint8)
+    ring = inner_u8 & (1 - cv2.erode(inner_u8, np.ones((5, 5), np.uint8)))
+    touching = np.unique(labels[(ring > 0) & (occ > 0)])
+    keep = np.zeros(n, dtype=bool)
+    keep[1:] = stats[1:, cv2.CC_STAT_AREA] <= max_area
+    keep[touching] = False
+    if not keep.any():
+        return out
+    islands = keep[labels].astype(np.uint8)
+    k = 2 * dilate_px + 1
+    islands = cv2.dilate(islands, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    return cv2.GaussianBlur(islands.astype(np.float32), (0, 0), 1.0)
 
 
 class PaintingTexture:
@@ -420,7 +464,22 @@ class Renderer:
         use = band & (den > 0.004)
         if not kp.unmix:
             use = torch.zeros_like(use)
-        alpha = torch.where(use, a2.clamp(0.0, 1.0), alpha0) * m_quad
+        alpha_key = torch.where(use, a2.clamp(0.0, 1.0), alpha0)
+        alpha = alpha_key * m_quad
+
+        # --- Marcatori / macchie / riflessi interni ---------------------------------
+        # Piccole isole non-pannello completamente interne: vengono sostituite
+        # come il pannello. Nella composizione additiva non basta alpha = 1 (il
+        # termine I - P riporterebbe la crocetta): lì il pixel originale viene
+        # sostituito dal pannello pulito.
+        m_mark = None
+        if rp.remove_markers:
+            max_area = rp.marker_max_area * abs(geo.quad_area(q_roi))
+            mm = marker_mask((alpha_key < 0.5).cpu().numpy(), inner.cpu().numpy(), max_area)
+            if mm.any():
+                m_mark = torch.from_numpy(mm).to(dev) * m_quad
+                alpha = torch.maximum(alpha, m_mark)
+                lin = lin + m_mark[None] * (plate - lin)
 
         # --- Quadro proiettato (motion blur + sovracampionamento 2×2) -------------
         painting = self._sample_painting(quads_roi, xs, ys)
@@ -455,6 +514,8 @@ class Renderer:
             plate_disp = from_linear(plate.clamp(0.0, 1.5))
             yr = (LUMA_709[0] * (roi[0] - plate_disp[0]) + LUMA_709[1] * (roi[1] - plate_disp[1])
                   + LUMA_709[2] * (roi[2] - plate_disp[2]))
+            if m_mark is not None:
+                yr = yr * (1.0 - m_mark)
             out_disp = out_disp + (rp.grain * alpha * alpha * yr)[None]
 
         # --- Uscita ------------------------------------------------------------------

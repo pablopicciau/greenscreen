@@ -59,6 +59,9 @@ def _add_render_opts(ap: argparse.ArgumentParser) -> None:
                     help="libx264 = qualità massima (CPU); h264_nvenc/hevc_nvenc = GPU NVIDIA, più veloce")
     ap.add_argument("--crf", type=int, default=None, help="qualità (più basso = migliore, default 17)")
     ap.add_argument("--no-audio", action="store_true", help="non copiare l'audio originale")
+    ap.add_argument("--keep-markers", action="store_true",
+                    help="non sostituire le piccole zone non verdi interne al pannello "
+                         "(marcatori di tracking, macchie, riflessi)")
 
 
 def build_config(args: argparse.Namespace) -> Config:
@@ -85,6 +88,7 @@ def build_config(args: argparse.Namespace) -> Config:
         if args.crf is not None:
             cfg.encode.crf = args.crf
         cfg.encode.keep_audio = not args.no_audio
+        cfg.render.remove_markers = not args.keep_markers
     return cfg
 
 
