@@ -226,7 +226,7 @@ senza effetti sugli altri casi.
 | MediaPipe Hands | scartata | punti chiave della mano, non una maschera al pixel |
 | Robust Video Matting | scartata | licenza GPL-3.0, pensato per persone intere |
 | SAM 2 | non necessario | maschere binarie: bordi delle dita meno precisi di una chiave sui pixel misti |
-| CorridorKey (keyer neurale di Corridor Digital, 2026) | **valutato, non integrato** | ottimo su capelli e motion blur, ma i **modelli hanno licenza CC BY-NC-SA** (uso non commerciale: un Reel per vendere quadri è commerciale), pesante per 6 GB di VRAM, e richiede comunque una chiave grezza in ingresso |
+| CorridorKey 2.0 (keyer neurale di Corridor Digital, 2026) | **valutato, non integrato** | ottimo su capelli e motion blur. **Non gira sulla RTX 2060**: lavora in bfloat16 e richiede una RTX serie 30 o successiva (README ufficiale), ~5 GB di modelli. **Licenza** (verificata sul testo): CC BY-NC-SA 4.0 *con termini aggiuntivi* che permettono di usarlo per progetti commerciali (i video prodotti sono tuoi), ma vietano di ridistribuirlo o integrarlo in altri programmi senza accordo scritto. Usabile solo come strumento esterno, con una GPU più recente; vedi 3.16 |
 | Chiave morbida con screen plate (spazio gamma) | sostituita (v0.2) | con la sola differenza di verde, nei pixel misti pelle/pannello alpha è sottostimato (la pelle ha G < R): bordi delle dita "mangiati" |
 | **(v0.2) Chiave in luce lineare + modello a due colori nella fascia di transizione** | **scelta** | `I = α·P + (1−α)·F` con `P` = screen plate e `F` = colore del primo piano stimato dai pixel vicini: `α = ⟨I−F, P−F⟩/‖P−F‖²` è esatto per qualunque colore delle mani e anche nella sfocatura di movimento. Bordi del pannello **+4.4 dB**, bordi delle mani **+2.8 dB** |
 
@@ -356,6 +356,65 @@ dell'immagine (o un colore). Un'estensione generativa locale è possibile
 (LaMa, Stable Diffusion inpainting) ma è sconsigliata come default: inventa
 parti del quadro che l'artista non ha dipinto.
 
+### 3.16 Ricerca sullo stato dell'arte e prove su video reali (novembre 2026)
+
+Ricerca svolta sul web, con le licenze verificate **sui file LICENSE originali**
+dove indicato (i siti secondari riportavano informazioni contraddittorie o
+sbagliate). Il criterio è sempre lo stesso: serve a *questo* problema (pannello
+verde uniforme, mani, RTX 2060 da 6 GB, uso commerciale dei Reel)?
+
+| Lavoro (anno) | Cos'è | Verdetto per questo progetto |
+|---|---|---|
+| **WOFTSAM** (Šerých, Matas, arXiv 2602.19624, feb. 2026) | nuovo stato dell'arte nel tracking planare (benchmark PlanarTrack e POT-210): flusso ottico pesato (WOFT) + segmentazione SAM 2.1 tiny per stimare l'omografia e ri-agganciare il bersaglio | **idea confermata, codice non usabile**: la segmentazione-guida-l'omografia è esattamente ciò che facciamo con la chiave verde (che qui è più precisa e gratuita); il flusso ottico presuppone una superficie con texture. Licenza del codice CC BY-NC-SA 4.0 (verificata): non commerciale |
+| PlanarTrack (ICCV 2023, esteso su CVIU 2025, arXiv 2510.23368) | benchmark di tracking planare difficile | i migliori tracker precedenti perdono molta precisione in condizioni difficili: conferma che non conviene affidarsi a un tracker generico |
+| CoTracker3, TAPNext (ICCV 2025), AllTracker (arXiv 2506.07310) | tracciamento di punti qualunque | tracciano punti con texture: sul verde uniforme non c'è nulla da seguire. CoTracker ha licenza non commerciale |
+| SAM 3 / 3.1 (Meta, 2025-2026) | segmentazione con concetti testuali, anche video | requisiti non dichiarati ufficialmente; le stime della comunità (fonti secondarie) parlano di 16-24 GB per il video: **fuori portata per 6 GB**. Sulla RTX 2060 l'opzione realistica resta SAM 2.1 tiny (quella usata da WOFTSAM) |
+| **CorridorKey 2.0** (Corridor Digital, 2026) | keyer neurale per green screen: alpha lineare e colore del primo piano ricostruiti (capelli, motion blur) | richiede RTX serie 30+ (bfloat16), ~5 GB di modelli (C-RADIOv4, MoGe-2, RVM). Licenza verificata: uso per progetti commerciali permesso, risultati tuoi, ma vietata ridistribuzione/integrazione. Per mani su un pannello verde la chiave a due colori della v0.2 è già adeguata |
+| MatAnyone 2 (CVPR 2026), MatAnyone-E | matting video di persone senza green screen | pensati per persone intere; licenze contraddittorie nelle fonti secondarie (da verificare). Non servono con un pannello verde |
+| RelightVid, Light-A-Video, UniRelight, GenCompositor (2025) | rilluminazione e compositing con modelli di diffusione video | pesanti e soprattutto **alterano l'aspetto**: per un'opera d'arte il trasferimento fisico della luce (luminanza del pannello) è preferibile, perché non inventa nulla |
+
+Fonti: [WOFTSAM, arXiv](https://arxiv.org/abs/2602.19624) ·
+[WOFTSAM, codice](https://github.com/serycjon/WOFTSAM) ·
+[PlanarTrack, arXiv](https://arxiv.org/abs/2510.23368) ·
+[AllTracker, arXiv](https://arxiv.org/abs/2506.07310) ·
+[TAPNext, ICCV 2025](https://www.openaccess.thecvf.com/content/ICCV2025/papers/Zholus_TAPNext_Tracking_Any_Point_TAP_as_Next_Token_Prediction_ICCV_2025_paper.pdf) ·
+[CorridorKey 2.0, codice e licenza](https://github.com/nikopueringer/CorridorKey2.0) ·
+[MatAnyone 2, arXiv](https://arxiv.org/abs/2512.11782) ·
+[Light-A-Video, arXiv](https://arxiv.org/abs/2502.08590) ·
+[GenCompositor, arXiv](https://arxiv.org/abs/2509.02460) ·
+[requisiti SAM 3 (fonte secondaria)](https://smeltcore.com/models/sam-3/).
+
+**Prove su video reali.** Tre clip gratuite Mixkit (licenza "Stock Video
+Free"), 1280×720 a 23.976 fps, senza audio: un telefono con schermo verde
+tenuto in mano, due con crocette di tracking nere e un pollice che si muove
+sullo schermo ([esempio](https://mixkit.co/free-stock-video/business-woman-holding-a-cell-phone-with-green-screen-42621/)).
+Usate solo per le prove, non incluse nel repository. Risultati della v0.2:
+
+* nessun fotogramma perso; gli angoli arrotondati dello schermo vengono
+  rispettati (li decide la chiave);
+* pollice e indice con bordi dritti sopra lo schermo: **gestiti** dalla v0.2
+  (nella v0.1 il lato inferiore veniva agganciato al bordo del dito);
+* **crocette di tracking visibili sopra il quadro** → aggiunta la rimozione
+  delle piccole isole non verdi interne al pannello (ora spariscono; resta
+  solo una crocetta toccata da un dito);
+* trovato un difetto di robustezza: con il filtro libplacebo presente ma
+  senza driver Vulkan funzionanti, un video HDR veniva letto con zero
+  fotogrammi → ora si ripiega su zscale.
+
+**Esperimenti provati e scartati in questa revisione** (misure su verità di
+riferimento sintetica e su residuo/ispezione visiva dei video reali):
+
+| Idea | Sintetico | Video reali | Esito |
+|---|---|---|---|
+| Controllo di coerenza con il **residuo del miglior rettangolo 3D** (solvePnP) e possibilità di ricostruire *qualunque* lato | neutro | **peggiora**: ricostruisce il lato superiore, perfettamente visibile, invece di quello coperto dal pollice | scartato: spostare *qualunque* lato può rendere il quad un rettangolo coerente, quindi la coerenza geometrica da sola non dice quale lato è falso; deve deciderlo l'evidenza (visibilità, giunzione a T) |
+| **Priorità alla giunzione a T** nella scelta del lato da ricostruire (e attivazione con giunzione ≥ 0.9) | oggetto dritto: errore medio sul lato coperto 7.5 → **2.1 px**, massimo 48 → 11 px | **peggiora**: quad degeneri | scartato: su un telefono i bordi dello schermo proseguono dritti nei bordi della scocca, quindi la giunzione a T dà falsi positivi forti (> 0.9) su lati veri |
+
+Conseguenza onesta: il caso **"oggetto con bordo dritto davanti a un intero
+lato"** è risolto nelle scene del benchmark, ma in una scena diversa (oggetto
+orizzontale davanti al lato inferiore di un pannello inclinato, test 540p)
+l'errore resta fino a ~45 px. Le correzioni che lo risolvono sul sintetico
+peggiorano i video reali, quindi non sono state adottate.
+
 ## 4. Dipendenze e licenze
 
 | Componente | Licenza | Note per la distribuzione |
@@ -367,7 +426,8 @@ parti del quadro che l'artista non ha dipinto.
 | FFmpeg | LGPL-2.1+ / **GPL** se compilato con libx264 | le build Windows comuni (gyan.dev) sono GPL: uso personale libero; per *ridistribuire* l'eseguibile servono gli obblighi GPL |
 | imageio-ffmpeg | BSD-2-Clause | scarica un binario FFmpeg GPL |
 | Pillow (solo test) | MIT-CMU | |
-| Da evitare | | CoTracker (CC-BY-NC), **modelli CorridorKey (CC BY-NC-SA)**, Ultralytics YOLO (AGPL-3.0), Robust Video Matting (GPL-3.0) |
+| Da evitare | | CoTracker (CC-BY-NC), **WOFTSAM** (codice CC BY-NC-SA), Ultralytics YOLO (AGPL-3.0), Robust Video Matting (GPL-3.0) |
+| Non integrabili (uso solo esterno) | | **CorridorKey**: uso commerciale dei risultati permesso, ma vietato ridistribuirlo o integrarlo nel software (vedi 3.16) |
 
 Nessun abbonamento, nessuna API a pagamento, nessun servizio cloud: dopo
 l'installazione tutto funziona offline.
@@ -381,7 +441,9 @@ l'installazione tutto funziona offline.
 | Precisione delle linee (crominanza 4:2:0, gamma) | alta | crominanza nella posizione giusta, sub-pixel in luce lineare | **risolto (v0.2)**: 0.16 px |
 | Lato intero coperto da un oggetto irregolare | media | ricostruzione, coerenza globale, Hermite + **(v0.2)** geometria del rettangolo | **risolto (v0.2)**: 1.5 s di occlusione con il pannello che si inclina, da 41 a 2.7 px |
 | Memoria che cresce durante il rendering (GPU con riserva estesa nella RAM, Windows) | alta | campioni a gruppi, riserva limitata | **risolto (v0.2)**: da 12.5 a 2.7 GB |
-| Lato intero coperto da un oggetto con **bordo dritto** | media | giunzione a T + vincolo "solo accorciare" + coerenza | **risolto (v0.2)**: ≤ 2.5 px |
+| Lato intero coperto da un oggetto con **bordo dritto** | media | giunzione a T + vincolo "solo accorciare" + coerenza | **parziale**: ≤ 2.5 px nelle scene del benchmark, fino a ~45 px con un oggetto orizzontale davanti a un pannello inclinato (vedi 3.16) |
+| Marcatori di tracking, macchie, riflessi sul pannello | media | piccole isole non verdi interne sostituite come il pannello | **risolto**, provato su video reali (resta una crocetta toccata da un dito) |
+| Video HDR su PC senza driver Vulkan | media | libplacebo usato solo se Vulkan si inizializza davvero, altrimenti zscale | **risolto** |
 | Verde saturo dello sfondo attaccato al pannello | media | modello di colore del pannello, raggruppamento dei verdi; nel rendering chiave a due colori e despill guidati dalla tinta | **risolto (v0.2)** (resta irrisolvibile un verde *identico* al pannello) |
 | Sfocatura di movimento | media | motion blur con esposizione stimata | **risolto (v0.2)** |
 | Quadro più nitido/pulito della scena | media | nitidezza stimata, grana | **risolto (v0.2)** |
@@ -472,6 +534,7 @@ occlusioni lunghe). Versione originale → versione attuale.
 | 3c | motion blur sintetico sull'immagine inserita | **fatto (v0.2)**, con esposizione stimata |
 | 3d | precisione: crominanza, luce lineare, modello di colore, giunzione a T | **fatto (v0.2)** |
 | 3e | rendering su GPU, chiave a due colori, nitidezza, HDR con libplacebo | **fatto (v0.2)** |
+| 3f | ricerca sullo stato dell'arte, prove su video reali, rimozione dei marcatori | **fatto** (3.16) |
 | 3b | modalità assistita ArUco/AprilTag | da fare (facoltativa) |
 | 4 | segmentazione AI per pannello bianco | da fare (facoltativa) |
 | 5 | interfaccia PySide6, correzione manuale degli angoli, coda di esportazione | da fare |

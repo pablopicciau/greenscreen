@@ -20,8 +20,11 @@ Novità della versione 0.2 (dettagli e misure in `docs/ANALISI_TECNICA.md`):
 * **motion blur** sul quadro, con il tempo di esposizione stimato dal video;
 * nitidezza e grana uguali a quelle della camera, bordi delle dita esatti
   (modello a due colori), compositing in luce lineare sulla GPU;
-* risolti i limiti noti: **verde saturo vicino al pannello** e **oggetto con
-  bordo dritto** davanti a un lato; HDR convertito sulla GPU e testato;
+* risolti i limiti noti: **verde saturo vicino al pannello** e, nelle scene
+  di prova, **oggetto con bordo dritto** davanti a un lato (vedi però i limiti
+  noti); HDR convertito sulla GPU e testato;
+* **marcatori di tracking** (crocette), macchie e piccoli riflessi sul pannello
+  vengono sostituiti insieme al pannello (provato su video reali);
 * un **lato coperto per secondi** mentre inclini il pannello viene
   ricostruito dalla geometria degli altri tre lati (errore da 41 a ~2-3 px);
 * memoria sotto controllo: ~3 GB di RAM per il rendering di un Reel Full HD.
@@ -114,6 +117,7 @@ Opzioni principali:
 | `--codec libx264` | `libx264` (qualità massima), `h264_nvenc` / `hevc_nvenc` (GPU NVIDIA, più veloce), `libx265` |
 | `--crf 17` | qualità di codifica (più basso = migliore e più pesante) |
 | `--no-audio` | non copiare l'audio originale |
+| `--keep-markers` | non sostituire le piccole zone non verdi interne al pannello (marcatori di tracking, macchie, riflessi) |
 | `--debug-video file.mp4` | video con il contorno del tracking: verde = misurato, arancio = lato ricostruito, rosso = perso |
 
 L'analisi salva la traccia in `ripresa.track.json` accanto al video: i comandi
@@ -198,5 +202,11 @@ docs/                 analisi tecnica e guida alle riprese
 * Un lato coperto viene ricostruito dagli altri tre; con **due lati coperti
   insieme** la posizione si può solo prevedere dal movimento (per pochi
   fotogrammi va bene, a lungo no).
-* Finora testato su video sintetici (fisicamente realistici): il prossimo
-  passo è la prova su riprese reali.
+* Un oggetto con un **bordo dritto** che copre un intero lato è riconosciuto
+  nelle scene del benchmark, ma non in tutti i casi: con un oggetto
+  orizzontale davanti al lato inferiore di un pannello inclinato l'errore
+  arriva a ~45 px (vedi l'analisi tecnica, sezione 3.16).
+* Una crocetta (marcatore) **toccata da un dito** si unisce al dito e resta
+  visibile.
+* Provato su video sintetici e su tre clip reali (telefoni con schermo verde
+  tenuti in mano): manca ancora la prova su una tua ripresa con il pannello.
