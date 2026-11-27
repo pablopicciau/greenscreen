@@ -99,14 +99,22 @@ def quad_from_lines(lines: list[np.ndarray]) -> np.ndarray | None:
 def order_quad(points: np.ndarray) -> np.ndarray:
     """Ordina 4 punti qualsiasi come TL, TR, BR, BL.
 
-    Ordina per angolo attorno al baricentro (senso orario sullo schermo) e
-    fa partire la sequenza dal punto con x+y minima (il più in alto a sinistra).
+    Ordina per angolo attorno al baricentro (senso orario sullo schermo); il
+    lato "in alto" è quello il cui **punto medio** è più in alto, e TL è il
+    suo primo estremo in senso orario.
+
+    (Prima si partiva dal punto con x+y minima. Con un quadro visto quasi di
+    taglio il lato superiore è corto e molto inclinato: se sale verso destra,
+    l'angolo con x+y minima è TR e tutte le etichette slittavano di una
+    posizione, con il rapporto d'aspetto invertito e il quadro ruotato di 90°
+    per tutto il video. Caso reale: persona che si gira verso sinistra.)
     """
     pts = np.asarray(points, dtype=np.float64).reshape(4, 2)
     c = pts.mean(axis=0)
     ang = np.arctan2(pts[:, 1] - c[1], pts[:, 0] - c[0])
     pts = pts[np.argsort(ang)]  # con y verso il basso questo è orario a schermo
-    start = int(np.argmin(pts.sum(axis=1)))
+    mid_y = (pts[:, 1] + np.roll(pts[:, 1], -1)) / 2.0   # lato i: dal punto i al punto i+1
+    start = int(np.argmin(mid_y))
     return np.roll(pts, -start, axis=0)
 
 

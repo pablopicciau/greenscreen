@@ -29,7 +29,10 @@ from .device import describe, get_device
 from .image_fit import load_image
 from .render import Renderer
 from .smoothing import flag_inconsistent_sides, smooth_track
-from .tracker import STATUS_LOST, STATUS_MODEL, STATUS_OK, STATUS_PREDICTED, Track, track_frames
+from .keyer import PanelColor
+from .tracker import (STATUS_LOST, STATUS_MODEL, STATUS_OK, STATUS_PREDICTED, Track, backward_starts,
+                      discard_weak_segments, merge_backward, normalize_orientation, track_frames,
+                      track_segments)
 from .video_io import FrameConverter, FrameReader, FrameWriter, VideoInfo, YuvFrame, iter_bgr, probe
 
 Logger = Callable[[str], None]
@@ -91,6 +94,20 @@ def analyze(video_path: str, cfg: Config, track_path: str | None = None,
         frames = prefetch((conv.bgr_u8(f) for f in reader), 3)
         track = track_frames(frames, (info.width, info.height), info.fps, cfg, prog)
     prog.done()
+    # Bersagli sbagliati (es. un verde dello sfondo agganciato mentre il quadro
+    # è di spalle): scartati, niente inserimento.
+    dropped = discard_weak_segments(track, cfg.track.min_strong_frames)
+    if dropped:
+        log(f"Scartati {dropped} fotogrammi di un bersaglio che non era il pannello "
+            f"(probabilmente un verde dello sfondo).")
+    # Quadro che compare di taglio (reveal): tracking all'indietro dal primo
+    # istante in cui il pannello è sicuro.
+    recovered = _extend_backward(info, track, cfg, device)
+    if recovered:
+        log(f"Tracking all'indietro: recuperati {recovered} fotogrammi in cui il quadro compare.")
+    reoriented = normalize_orientation(track)
+    if reoriented:
+        log(f"Orientamento degli angoli corretto su {reoriented} fotogrammi (primo aggancio di taglio).")
     fixed = flag_inconsistent_sides(track, cfg.track.aspect_tolerance, cfg.track.trusted_support)
     if fixed:
         log(f"Controllo di coerenza: {len(fixed)} fotogrammi con un lato coperto da un oggetto "
@@ -113,6 +130,57 @@ def analyze(video_path: str, cfg: Config, track_path: str | None = None,
         write_debug_video(info, track, debug_video, cfg, show_progress)
         log(f"Video di debug salvato in {debug_video}")
     return track
+
+
+def _extend_backward(info: VideoInfo, track: Track, cfg: Config, device) -> int:
+    """Tracking all'indietro prima di ogni tratto valido preceduto da fotogrammi
+    senza pannello. Rilegge solo i fotogrammi necessari (al massimo
+    ``cfg.track.backward_seconds`` prima di ogni tratto) e li percorre a
+    ritroso partendo dalla posizione sicura. Ritorna i fotogrammi recuperati.
+    """
+    if cfg.track.backward_seconds <= 0:
+        return 0
+    starts = backward_starts(track)
+    if not starts:
+        return 0
+    n_back = max(1, int(round(cfg.track.backward_seconds * track.fps)))
+    segs = track_segments(track)
+    ranges = []
+    for a in starts:
+        lo = max(0, a - n_back)
+        for _s0, e0 in segs:           # non oltre la fine del tratto precedente
+            if e0 < a:
+                lo = max(lo, e0 + 1)
+        if lo < a:
+            ranges.append((lo, a))
+    if not ranges:
+        return 0
+    need = {k for lo, a in ranges for k in range(lo, a)}
+    last = max(a for _, a in ranges)
+    cache = {}
+    with FrameReader(info) as reader:
+        conv = FrameConverter(reader.fmt, device, detail=cfg.detect.chroma_detail)
+        for i, frame in enumerate(reader):
+            if i in need:
+                cache[i] = frame
+            if i >= last - 1:
+                break
+    color = PanelColor.from_dict(track.panel_color) if track.panel_color else None
+    total = 0
+    for lo, a in ranges:
+        ids = [k for k in range(a - 1, lo - 1, -1) if k in cache]
+        if not ids:
+            continue
+        # Posizioni di partenza: il primo fotogramma sicuro (e il successivo, per la velocità).
+        seed = [(-1, track.raw[a].copy())]
+        if a + 1 < track.n_frames and track.status[a + 1] in (STATUS_OK, STATUS_MODEL) \
+                and not np.isnan(track.raw[a + 1]).any():
+            seed = [(-2, track.raw[a + 1].copy())] + seed
+        frames = (conv.bgr_u8(cache[k]) for k in ids)
+        back = track_frames(frames, (track.width, track.height), track.fps, cfg, seed=seed,
+                            seed_color=color, seed_ratio=track.green_ratio, follow_only=True)
+        total += merge_backward(track, back, ids)
+    return total
 
 
 def prefetch(iterable, depth: int = 3):

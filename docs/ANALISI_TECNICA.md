@@ -415,6 +415,59 @@ orizzontale davanti al lato inferiore di un pannello inclinato, test 540p)
 l'errore resta fino a ~45 px. Le correzioni che lo risolvono sul sintetico
 peggiorano i video reali, quindi non sono state adottate.
 
+### 3.17 Scenario "reveal": di spalle, ti giri e mostri un quadro grande
+
+È il Reel tipico degli artisti: all'inizio la persona è di spalle e regge il
+quadro davanti a sé (la camera vede la schiena e il **retro** della tela con il
+telaio), poi si gira lentamente e il quadro compare, prima **di taglio** (una
+striscia sottile, vista quasi di lato), poi sempre più frontale. Scena di prova
+dedicata: `tools/make_reveal_video.py` (persona che ruota, tela 3D con
+spessore, retro e lati, z-buffer per le occlusioni tra corpo e quadro), con
+preset nel benchmark (`python tools/benchmark.py --scenarios rivelazioni --render`).
+
+**Com'era (v0.2, scena base 100×120 cm, 540×960):** errori medi sugli angoli
+441 px (quadro di taglio), 427 px (in rotazione), 157 px (frontale); quadro
+"inserito" in tutti i 50 fotogrammi in cui si vede solo il retro; il pannello
+vero restava verde in 69 fotogrammi; PSNR rispetto al composito perfetto 10.8 dB.
+
+**Cause** (trovate dai dati, fotogramma per fotogramma):
+
+1. *Aggancio sbagliato all'inizio.* Senza pannello visibile, il programma
+   agganciava una piccola zona verdastra dello sfondo (4 000 px, confidenza
+   0.3-0.4, lati mai misurati del tutto) e imparava da lei il "colore del
+   pannello".
+2. *Una previsione sbagliata impedisce di vedere la verità.* Quando il quadro
+   vero compariva, i punti di bordo venivano cercati vicino ai lati *previsti*
+   (quelli del bersaglio sbagliato): il lato vero non veniva mai misurato e la
+   ricostruzione dei lati nascosti perpetuava l'errore fino alla fine.
+3. *Limiti geometrici pensati per la ricerca da zero.* Di taglio il quad vero
+   ha angoli interni di 19.7° e 160.3° (a 84° di vista): scartato perché fuori
+   dall'intervallo 20°-160°.
+4. (Durante lo sviluppo della correzione) il tracking all'indietro, perso il
+   pannello vicino al profilo, faceva una ricerca libera e riagganciava la zona
+   dello sfondo.
+
+**Correzioni:**
+
+* **Rilevamento "forte"** (confidenza ≥ 0.6 e almeno 3 lati misurati per oltre
+  metà): solo questi insegnano il colore del pannello.
+* **Ri-aggancio**: se il bersaglio attuale è debole si cerca anche su tutto il
+  fotogramma, senza previsione né modello di colore; un candidato forte e
+  diverso, nettamente migliore, lo sostituisce (e si dimentica ciò che si era
+  appreso dal bersaglio precedente).
+* **Tratti deboli scartati**: un tratto di traccia senza almeno 3 rilevamenti
+  forti, o molto più piccolo del tratto principale, non era il pannello:
+  nessun inserimento.
+* **Tracking all'indietro** (possibile perché l'analisi è offline): dal primo
+  istante in cui il pannello è sicuro si torna indietro nel tempo seguendolo
+  mentre si assottiglia verso il profilo. Si limita a *seguire* (nessuna
+  ricerca libera) e si innestano solo misure vere e continue.
+* **Soglie da inseguimento**: con una posizione prevista sono ammessi angoli
+  interni fino a 6°/174° e un'area minima più piccola; la ricerca da zero resta
+  severa.
+
+<!-- RISULTATI_REVEAL -->
+
 ## 4. Dipendenze e licenze
 
 | Componente | Licenza | Note per la distribuzione |

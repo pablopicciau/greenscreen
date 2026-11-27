@@ -38,6 +38,13 @@ class DetectParams:
 
     # Area minima del pannello rispetto al fotogramma (scarta rumore/piante).
     min_area_frac: float = 0.004
+    # Durante l'inseguimento (con una posizione prevista) il pannello può
+    # essere visto quasi di taglio: una striscia sottile con angoli interni
+    # molto acuti (a 84° di vista: 19.7° e 160.3°). Soglie più permissive solo
+    # in questo caso; la ricerca da zero resta severa.
+    min_area_frac_tracking: float = 0.0004
+    min_angle: float = 20.0
+    min_angle_tracking: float = 6.0
     # Tolleranza (frazione della diagonale del quad) per assegnare i punti di
     # contorno ai lati nelle iterazioni di rifinitura.
     assign_tol: tuple[float, ...] = (0.10, 0.04, 0.015)
@@ -93,6 +100,23 @@ class TrackParams:
     aspect_tolerance: float = 0.02
     # I lati visibili per almeno questa frazione non vengono mai messi in dubbio.
     trusted_support: float = 0.9
+    # Un rilevamento è "forte" (sicuramente il pannello) se ha almeno questa
+    # confidenza e almeno ``strong_sides`` lati misurati per oltre metà della
+    # lunghezza. Solo i rilevamenti forti insegnano il colore del pannello.
+    strong_confidence: float = 0.6
+    strong_sides: int = 3
+    # Un tratto di traccia con meno rilevamenti forti di così non era il
+    # pannello (es. una zona verdastra dello sfondo agganciata mentre il
+    # quadro è di spalle): viene scartato, nessun inserimento.
+    min_strong_frames: int = 3
+    # Ri-aggancio: se il bersaglio attuale è debole, un candidato forte trovato
+    # su tutto il fotogramma lo sostituisce se la sua confidenza è più alta
+    # almeno di questo margine.
+    reacquire_margin: float = 0.2
+    # Tracking all'indietro (secondi) dal primo istante in cui il pannello è
+    # sicuro: segue il quadro che compare di taglio mentre ci si gira (reveal),
+    # così il verde viene coperto fin dal primo istante. 0 = disattivato.
+    backward_seconds: float = 3.0
 
 
 @dataclass

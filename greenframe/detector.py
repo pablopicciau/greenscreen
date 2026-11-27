@@ -604,6 +604,43 @@ def _handle_hidden_sides(
     return cand, [missing]
 
 
+def _cover_visible_green(quad: np.ndarray, measured: np.ndarray, pts: np.ndarray,
+                         tol: float = 1.5) -> np.ndarray:
+    """Un lato non misurato non può tagliare il verde visibile del pannello.
+
+    I lati nascosti vengono ricostruiti (dagli altri tre lati o dal movimento):
+    se la ricostruzione cade *dentro* la zona verde che si vede, è sicuramente
+    sbagliata. Succede con un quadro grande che esce dall'inquadratura mentre
+    si gira: le proporzioni prese da un fotogramma di taglio danno un quad
+    troppo stretto (nei test: lato sinistro a x=355 invece che a 0). Qui ogni
+    lato non misurato viene spostato in fuori, parallelamente, finché il
+    contorno verde visibile (anche i punti sul bordo del fotogramma) non è
+    tutto dentro il quad.
+    """
+    if measured.all() or len(pts) == 0:
+        return quad
+    lines = geo.quad_lines(quad)
+    centroid = quad.mean(axis=0)
+    moved = False
+    for s in np.nonzero(~measured)[0]:
+        ln = lines[s].copy()
+        if geo.point_line_distance(centroid[None], ln)[0] > 0:
+            ln = -ln                                   # normale verso l'esterno
+        out = geo.point_line_distance(pts, ln)
+        push = float(np.percentile(out, 99.5))        # robusto a pochi punti spuri
+        if push > tol:
+            ln = ln.copy()
+            ln[2] -= push
+            lines[s] = ln
+            moved = True
+    if not moved:
+        return quad
+    covered = geo.quad_from_lines(lines)
+    if covered is None or not geo.is_convex(covered):
+        return quad
+    return covered
+
+
 def _fail(diag: dict | None, reason: str) -> None:
     """Registra il motivo di un fallimento (se richiesto) e ritorna None."""
     if diag is not None:
@@ -642,7 +679,9 @@ def detect_quad(
     h, w = frame_bgr.shape[:2]
     x0, y0, x1, y1 = _roi_from_prior(prior, (h, w), dp.roi_margin)
     roi = frame_bgr[y0:y1, x0:x1]
-    min_area = dp.min_area_frac * w * h
+    # Area minima: severa nella ricerca da zero, permissiva quando si insegue
+    # il pannello (può comparire di taglio, come una striscia sottile).
+    min_area = (dp.min_area_frac if prior is None else dp.min_area_frac_tracking) * w * h
     # La ricerca grossolana (maschera, componenti, contorno) si fa a metà
     # risoluzione quando la ROI è grande: la posizione esatta dei lati la dà
     # comunque la rifinitura sub-pixel a piena risoluzione (passo 5).
@@ -766,12 +805,15 @@ def detect_quad(
     quad, completed = _handle_hidden_sides(quad, measured, support, prior, dp, reference)
     for s in completed:
         measured[s] = False
+    # 6b) I lati non misurati non possono tagliare il verde che si vede.
+    quad = _cover_visible_green(quad, measured, pts)
 
     # 7) Validazione geometrica.
     if not geo.is_convex(quad):
         return _fail(diag, "quad non convesso")
     angles = geo.interior_angles(quad)
-    if angles.min() < 20 or angles.max() > 160:
+    min_ang = dp.min_angle if prior is None else dp.min_angle_tracking
+    if angles.min() < min_ang or angles.max() > 180.0 - min_ang:
         return _fail(diag, "angoli interni implausibili")
     area = geo.quad_area(quad)
     if area < min_area:

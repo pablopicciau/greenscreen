@@ -167,6 +167,18 @@ In pratica: l'analisi richiede circa mezzo minuto e ogni versione con un
 quadro diverso circa 40 secondi. Durante il rendering il programma usa circa
 3 GB di RAM.
 
+### Reveal: di spalle, ti giri e mostri il quadro
+
+Lo scenario tipico dei Reel degli artisti ha una scena di prova dedicata
+(`tools/make_reveal_video.py`: persona che ruota, tela con spessore, retro con
+telaio, quadri grandi anche fuori inquadratura) e preset nel benchmark:
+
+```bash
+python tools/benchmark.py --scenarios rivelazioni --render
+```
+
+<!-- RISULTATI_REVEAL_README -->
+
 ## Struttura del progetto
 
 ```
@@ -186,6 +198,7 @@ greenframe/           pacchetto Python
   cli.py              riga di comando
 tools/
   make_synthetic_video.py   video di prova con verità di riferimento
+  make_reveal_video.py      scena "reveal": di spalle, ti giri e mostri un quadro grande
   make_test_painting.py     immagini di prova
   benchmark.py              precisione e qualità rispetto al composito perfetto
 tests/                test automatici (pytest)

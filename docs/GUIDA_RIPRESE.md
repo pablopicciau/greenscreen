@@ -10,7 +10,8 @@ di qualsiasi parametro.
 |---|---|
 | **Verde saturo e opaco** (cartoncino verde chroma, tessuto chroma, vernice verde opaca) | La chiave usa la "differenza di verde" `G − max(R,B)` e il colore esatto del pannello: più il verde è puro, più netta è la separazione da pelle e sfondo |
 | Superficie **liscia e rigida**, senza pieghe | Pieghe e riflessi diventano ombre sul quadro inserito; un cartoncino che si flette ha bordi curvi, mentre il quadro inserito è piano |
-| **Bordi dritti e netti**; se il pannello ha uno spessore, colora di verde anche i lati oppure tienilo frontale | I quattro lati sono la base del tracking (precisione misurata: 0.16 px) |
+| **Bordi dritti e netti** | I quattro lati sono la base del tracking (precisione misurata: 0.16 px) |
+| Se il pannello è una **tela con spessore**, colora di verde **solo il fronte**: lati bianchi o di un colore neutro | Quando giri il quadro i lati si vedono: se sono verdi si fondono con il fronte (bordo falsato fino a 58 px nei test) e restano come strisce verdi durante la rotazione, che nessun programma sa con cosa sostituire |
 | Evita superfici lucide | I riflessi della luce sono bianchi e vengono letti come "mano" davanti al quadro |
 | Proporzioni del pannello uguali a quelle dei tuoi quadri (es. 40×50) | Il quadro inserito non viene mai deformato: se le proporzioni sono diverse verrà ritagliato (`fill`) o avrà bande (`fit`) |
 
@@ -33,6 +34,41 @@ Vedi `ANALISI_TECNICA.md` per le alternative.
   pannello (nei test: 1.5 s, errore massimo ~2-3 px in Full HD). Evita solo
   di coprire **due lati** insieme: con due lati nascosti la posizione del
   quadro si può soltanto stimare dal movimento.
+
+## Il reveal: di spalle, ti giri e mostri il quadro
+
+È il Reel classico degli artisti ed è stato provato apposta, con una scena
+sintetica che lo riproduce (persona che ruota, tela 100×120, 120×150 e
+150×100 cm con spessore, retro con il telaio, mani sui lati): con le
+correzioni il quadro viene agganciato fin da quando compare di taglio, senza
+"lampi verdi", e seguito durante tutta la rotazione (errore medio 2-4 px in
+rotazione, sotto 0.4 px quando è frontale, nella scena 100×120).
+
+Consigli specifici:
+
+* **Lati della tela non verdi** (vedi sopra): è la cosa più importante per
+  questo tipo di video.
+* **Camera fissa** (cavalletto o appoggio): è il caso misurato. Un movimento
+  di camera a mano va bene, ma la camera ferma rende tutto più stabile.
+* **Blocca esposizione e bilanciamento del bianco**: quando un grande
+  pannello verde entra in scena, l'automatismo del telefono tende a cambiare
+  luminosità e colori di tutta l'immagine proprio durante la rivelazione.
+* **Gira a velocità naturale**: un mezzo giro in 1-3 secondi va bene (provato
+  anche in ~1 secondo); la sfocatura di movimento viene misurata e riprodotta
+  sul quadro.
+* **Quadri grandi e inquadratura**: se alla fine il quadro esce
+  dall'inquadratura su **entrambi i lati** (destra e sinistra, o alto e
+  basso), la sua posizione in quella direzione non si può misurare: le
+  proporzioni restano esatte (il quadro non viene deformato) ma la porzione
+  visibile può spostarsi del 2-3% della larghezza. Se puoi, tieni almeno un
+  bordo verticale del quadro dentro l'inquadratura; in ogni caso indica le
+  misure del quadro con `--aspect`, ad esempio `--aspect 150x100`.
+* **Indica sempre le misure del quadro** (`--aspect LARGHEZZAxALTEZZA`): nel
+  reveal il pannello passa molto tempo di taglio o fuori campo, e conoscere
+  le proporzioni esatte aiuta a ricostruire ciò che non si vede.
+* Piante o oggetti verdi nella stanza: mentre sei di spalle il programma non
+  li scambia più per il pannello (verificato), ma è comunque meglio tenerli
+  fuori dall'inquadratura.
 
 ## Luce
 

@@ -438,11 +438,125 @@ def _outlier_threshold(resid: np.ndarray, measured: np.ndarray, cutoff: float) -
     return thr
 
 
+def refine_opposite_hidden(raw: np.ndarray, track: Track) -> np.ndarray:
+    """Due lati opposti nascosti (es. quadro grande che esce a destra e a sinistra).
+
+    Si vedono solo due lati opposti: la **larghezza** del quadro (distanza tra
+    i lati nascosti) e la sua posizione lungo i lati visibili non sono
+    misurabili dall'immagine. Prima venivano estrapolate dal movimento: se i
+    lati escono dall'inquadratura mentre il quadro si sta ancora aprendo
+    (reveal), l'estrapolazione si ferma troppo presto e il quadro risulta
+    compresso, cioè deformato (fino a 84 px di errore nei test).
+
+    Qui la larghezza si ricava dalle proporzioni del pannello, stimate con
+    precisione su tutto il video: i due lati nascosti vengono allargati o
+    stretti in modo simmetrico (ricerca 1-D) finché il quad ha il rapporto
+    d'aspetto giusto. Problema ben condizionato (1% di larghezza ≈ 1% di
+    rapporto); resta presa dal movimento solo la posizione del centro.
+    """
+    if track.support is None or not track.panel_aspect or not track.focal or not track.aspect_reliable:
+        return raw
+    out = raw.copy()
+    size = (track.width, track.height)
+    for k in range(len(raw)):
+        if track.status[k] not in (STATUS_OK, STATUS_MODEL) or np.isnan(raw[k]).any():
+            continue
+        hidden = track.support[k] <= 0.0
+        for pair, seen in (((1, 3), (0, 2)), ((0, 2), (1, 3))):
+            if hidden[list(pair)].all() and not hidden[list(seen)].any():
+                q = raw[k]
+                if seen == (0, 2):
+                    # Lati visibili: alto (TL-TR) e basso (BR-BL); si scala lungo di essi.
+                    groups = ((0, 1), (3, 2))
+                else:
+                    groups = ((0, 3), (1, 2))   # visibili: sinistra (TL-BL) e destra (TR-BR)
+                centers = [(q[i] + q[j]) / 2 for i, j in groups]
+
+                def scaled(f: float) -> np.ndarray:
+                    r = q.copy()
+                    for (i, j), c in zip(groups, centers):
+                        r[i] = c + f * (q[i] - c)
+                        r[j] = c + f * (q[j] - c)
+                    return r
+
+                def g(f: float) -> float:
+                    ratio, _ = geo.estimate_aspect_ratio(scaled(f), size, fixed_focal=track.focal)
+                    return float(np.log(max(ratio, 1e-6) / track.panel_aspect))
+
+                lo, hi = 0.5, 2.0
+                g_lo, g_hi = g(lo), g(hi)
+                if not (np.isfinite(g_lo) and np.isfinite(g_hi)) or g_lo * g_hi > 0:
+                    continue
+                for _ in range(40):
+                    mid = 0.5 * (lo + hi)
+                    g_mid = g(mid)
+                    if g_lo * g_mid <= 0:
+                        hi = mid
+                    else:
+                        lo, g_lo = mid, g_mid
+                cand = scaled(0.5 * (lo + hi))
+                if geo.is_convex(cand):
+                    out[k] = cand
+                break
+    return out
+
+
+def refine_unbracketed_hidden(raw: np.ndarray, track: Track) -> np.ndarray:
+    """Un lato nascosto che non ricompare più (es. esce dall'inquadratura).
+
+    L'interpolazione nel tempo (:func:`refine_hidden_sides`) ha bisogno di un
+    fotogramma pulito *dopo* l'occlusione; se il lato non ricompare si usavano
+    le proporzioni dell'ultimo fotogramma pulito, magari preso di taglio
+    (reveal): quad troppo stretto. Con proporzioni del pannello affidabili il
+    lato nascosto viene invece spostato lungo i lati adiacenti finché il quad
+    ha il rapporto d'aspetto giusto (ricerca 1-D, solo verso l'esterno: il
+    rilevatore garantisce già che il quad copra il verde visibile).
+    """
+    if track.hidden_side is None or not track.panel_aspect or not track.focal or not track.aspect_reliable:
+        return raw
+    out = raw.copy()
+    size = (track.width, track.height)
+    # Fotogrammi "puliti" (misurati su tutti i lati): se ce n'è uno dopo, il
+    # lato nascosto ricompare e ci pensa l'interpolazione nel tempo.
+    clean_idx = np.array([k for k, s_ in enumerate(track.status)
+                          if s_ == STATUS_OK and track.hidden_side[k] < 0
+                          and not np.isnan(track.raw[k]).any()], dtype=int)
+    for k, m in enumerate(track.hidden_side):
+        m = int(m)
+        if m < 0 or np.isnan(raw[k]).any() or (clean_idx > k).any():
+            continue
+        opp = (m + 2) % 4
+        r1, r2 = _hidden_ratios(raw[k], m)
+
+        def g(f: float) -> float:
+            ratio, _ = geo.estimate_aspect_ratio(_place_hidden(raw[k], opp, f * r1, f * r2), size,
+                                                 fixed_focal=track.focal)
+            return float(np.log(max(ratio, 1e-6) / track.panel_aspect))
+
+        lo, hi = 1.0, 3.0
+        g_lo, g_hi = g(lo), g(hi)
+        if not (np.isfinite(g_lo) and np.isfinite(g_hi)) or g_lo * g_hi > 0:
+            continue                       # già abbastanza ampio (o geometria degenere)
+        for _ in range(40):
+            mid = 0.5 * (lo + hi)
+            g_mid = g(mid)
+            if g_lo * g_mid <= 0:
+                hi = mid
+            else:
+                lo, g_lo = mid, g_mid
+        cand = _place_hidden(raw[k], opp, 0.5 * (lo + hi) * r1, 0.5 * (lo + hi) * r2)
+        if geo.is_convex(cand):
+            out[k] = cand
+    return out
+
+
 def smooth_track(track: Track, half_window: int = 2, outlier_px: float = 1.5,
                  max_gap: int = 15) -> np.ndarray:
     """Calcola gli angoli finali (T, 4, 2); NaN dove non si deve sostituire."""
     T = track.n_frames
-    raw = refine_hidden_sides(track).reshape(T, 8)
+    raw = refine_hidden_sides(track)
+    raw = refine_unbracketed_hidden(raw, track)
+    raw = refine_opposite_hidden(raw, track).reshape(T, 8)
     valid = ~np.isnan(raw[:, 0])
 
     # Pesi di partenza: confidenza (minimo 0.05 per i misurati), quasi nulli
