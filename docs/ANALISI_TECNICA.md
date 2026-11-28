@@ -279,6 +279,9 @@ frazione del tempo tra fotogrammi con otturatore aperto). La larghezza
 25-75% di gaussiana ⊗ rettangolo ha forma chiusa; `σ` ed `e` si trovano con
 una ricerca su griglia (errore di Huber) su tutti i lati di tutti i
 fotogrammi: i bordi fermi fissano `σ`, quelli in movimento fissano `e`.
+Si usano solo i lati accanto ai quali non si vede lo spessore del pannello e
+solo i profili con la forma di una vera sfocatura (vedi 3.17: nel reveal il
+lato della tela visto di sbieco accorciava la stima del 25-30%).
 Stesso principio di *Video shutter angle estimation using optical flow and
 linear blur* (arXiv 2303.10247), applicato ai bordi netti del pannello.
 Misura: otturatore vero 0.50 (180°), stimato **0.53** nel video con
@@ -466,7 +469,112 @@ vero restava verde in 69 fotogrammi; PSNR rispetto al composito perfetto 10.8 dB
   interni fino a 6°/174° e un'area minima più piccola; la ricerca da zero resta
   severa.
 
-<!-- RISULTATI_REVEAL -->
+* **Quadri grandi fuori inquadratura** (stessa causa, scoperta nelle varianti
+  120×150 e 150×100 cm): quando un lato esce dall'inquadratura il bordo del
+  fotogramma non è il bordo del quadro. Il quad deve ora **coprire tutto il
+  verde visibile** e, se le proporzioni sono note (`--aspect`) o stimate in
+  modo coerente, i lati mai visti vengono ricostruiti dalle proporzioni
+  (prima la ricostruzione era stretta e sbagliata: errore frontale 229 px →
+  10 px nella variante orizzontale).
+* **Etichette degli angoli** con la rotazione nell'altro verso: il lato "alto"
+  è quello con il punto medio più in alto, e un primo aggancio di taglio con
+  gli angoli scambiati viene riorientato sul resto della traccia.
+
+**Risultati** (540×960, 4 s, 120 fotogrammi: 50 di spalle, poi di taglio, in
+rotazione e frontale; errore medio / massimo sugli angoli per fase; composito
+confrontato con quello perfetto, con `--aspect` delle misure vere):
+
+| Scena | di taglio | in rotazione | frontale | verde rimasto | PSNR composito |
+|---|---|---|---|---|---|
+| v0.2, tela 100×120 cm | 441 px | 427 px | 157 px | 69 fotogrammi | 10.8 dB |
+| **tela 100×120 cm** | **3.1 / 8.4 px** | **2.5 / 7.9 px** | **0.33 / 3.9 px** | **nessuno** | **29.3 dB** |
+| si gira dall'altra parte | 6.7 / 25 px | 0.74 / 4.6 px | 0.17 / 0.6 px | nessuno | 33.2 dB |
+| giro veloce (~1 s) | 7.0 / 15 px | 4.0 / 12 px | 0.19 / 2.3 px | nessuno | 30.7 dB |
+| grande 120×150 cm, esce dai lati | 16 / 50 px | 3.4 / 13 px | 15 / 30 px (\*) | nessuno | 13.4 dB (\*) |
+| orizzontale 150×100 cm, esce dai lati | 18 / 76 px | 4.5 / 12 px | 10 / 25 px (\*) | nessuno | 14.5 dB (\*) |
+| lati della tela verdi | 86 / 145 px | 9.6 / 44 px | 0.28 / 3.8 px | 15 fotogrammi di spalle, 5 di taglio, 1 in rotazione | 27.1 dB |
+
+In tutte le varianti il quadro viene agganciato dal primo fotogramma in cui il
+fronte è visibile, nessun fotogramma è perso e mentre si vede il retro il
+risultato non cambia (un quad estrapolato di un fotogramma prima del reveal
+esiste, ma non modifica nessun pixel: il rendering sostituisce solo il verde).
+Gli errori "di taglio" riguardano 4-5 fotogrammi in cui il quadro è una
+striscia sottile: lo spostamento è soprattutto *lungo* la striscia e si vede
+poco. Le scene classiche (sezione 6) danno risultati identici a prima.
+
+(\*) **Limite**: se alla fine il quadro esce dall'inquadratura da *entrambi*
+i lati, la sua posizione orizzontale non si può misurare (si vedono solo i
+lati alto e basso, uniformi). Le proporzioni restano esatte e non resta
+verde, ma la parte visibile del dipinto può essere spostata del 2-3% della
+larghezza. Il PSNR misura proprio questo spostamento del contenuto, che a
+occhio non si nota perché i bordi del quadro sono fuori campo.
+**Alternativa:** tenere almeno un bordo verticale nell'inquadratura.
+
+**Lati della tela verdi** (spessore dipinto di verde): mentre si è di spalle
+e quando il quadro è di taglio si vedono solo i lati verdi, che si fondono
+con il fronte e restano come strisce verdi. Nessun programma sa con cosa
+sostituirle (non fanno parte del quadro da inserire). **Alternativa:**
+colorare di verde solo il fronte (guida alle riprese).
+
+**Esposizione (motion blur) durante la rotazione.** Nel reveal la stima
+dell'otturatore risultava troppo corta del 25-30%: con l'esposizione simulata
+in modo continuo (15 istanti), otturatore vero 0.25 / 0.50 / 0.75 → stimato
+0.17 / 0.36 / 0.56, quindi un quadro più nitido della scena proprio mentre
+gira. Causa, verificata con una tela sottile (0.2 cm: stima 0.52, corretta):
+il **lato della tela visto di sbieco**. Il lato del quadro più vicino alla
+camera è quello che si muove più veloce nell'immagine, e ha attaccata la
+striscia bianca dello spessore, che si muove con lui e si mescola nella
+sfocatura di movimento. La larghezza misurata del bordo non segue più il
+modello gaussiana ⊗ rettangolo. Correzioni:
+
+1. **geometria**: dalla prospettiva del quad (con la focale stimata) si
+   calcola per ogni lato se la faccia laterale è visibile
+   (`geometry.side_face_visibility`, senza conoscere lo spessore); quei lati
+   non entrano nella stima. Il lato opposto confina direttamente con lo
+   sfondo e resta valido;
+2. **forma del profilo**: la larghezza si misura solo su profili simmetrici,
+   con il rapporto giusto tra larghezza 10-90% e 25-75%, piatti oltre la
+   transizione e spiegabili come miscela di *due* colori (un terzo colore
+   nella transizione tradisce la striscia o un dito).
+
+| otturatore vero | 0.25 | 0.50 | 0.75 | 0.50 tela sottile |
+|---|---|---|---|---|
+| prima | 0.17 | 0.36 | 0.56 | 0.52 |
+| **dopo** | **0.32** | **0.52** | **0.75** | **0.51** |
+
+Le scene classiche non cambiano (0.62 / 0.61 / 0.66 / 0.51 contro 0.63 /
+0.62 / 0.63 / 0.52) e nemmeno la nitidezza stimata sulle tre clip reali
+(quasi ferme: l'otturatore lì non è misurabile né serve). Resta una
+sovrastima con esposizioni brevi (0.25 → 0.32). In quel caso la sfocatura di
+movimento è comunque piccola e un errore relativo grande pesa poco in pixel.
+
+**Verifica in Full HD** (1080×1920, 8 s, 240 fotogrammi, tela 100×120 cm,
+esposizione simulata con 9 istanti, `--aspect 100x120`):
+
+| Fase | fotogrammi | agganciati | errore medio | errore massimo |
+|---|---|---|---|---|
+| di spalle (retro) | 100 | — (nessun pixel modificato) | — | — |
+| di taglio | 10 | 10 | 7.2 px | 51 px (quasi di profilo) |
+| in rotazione | 15 | 15 | **0.36 px** | 1.7 px |
+| frontale | 115 | 115 | **0.17 px** | 3.5 px |
+
+Otturatore stimato 0.57 (vero 0.50). Con 9 istanti il valore atteso è 0.56:
+9 copie discrete del bordo lo allargano come un'esposizione continua più
+lunga del 12%. Prima delle correzioni sul lato della tela, con 3 istanti, la
+stima era 0.83. Tempi sul server di prova (solo CPU, senza GPU) per questi
+8 s di Full HD: analisi 79 s, rendering e codifica 220 s. A parità di
+macchina l'analisi del reveal costa circa il doppio di quella delle scene
+classiche (17-25 s contro 8-10 s per 4 s a 540×960), per il ri-aggancio e il
+tracking all'indietro; sulla RTX 2060 il rendering usa la GPU (sezione 6).
+
+**Limiti che restano** (oltre ai due della tabella):
+
+* la prova è su una scena sintetica: manca una ripresa reale di reveal;
+* fotogrammi quasi di profilo: errore fino a ~50 px in Full HD lungo la
+  striscia (2-3 fotogrammi per giro, quadro largo pochi pixel);
+* esposizioni molto brevi (otturatore 90° o meno) vengono stimate un po'
+  lunghe (0.25 → 0.32); se il motion blur sul quadro sembra eccessivo:
+  `--shutter 90`.
 
 ## 4. Dipendenze e licenze
 
@@ -498,7 +606,7 @@ l'installazione tutto funziona offline.
 | Marcatori di tracking, macchie, riflessi sul pannello | media | piccole isole non verdi interne sostituite come il pannello | **risolto**, provato su video reali (resta una crocetta toccata da un dito) |
 | Video HDR su PC senza driver Vulkan | media | libplacebo usato solo se Vulkan si inizializza davvero, altrimenti zscale | **risolto** |
 | Verde saturo dello sfondo attaccato al pannello | media | modello di colore del pannello, raggruppamento dei verdi; nel rendering chiave a due colori e despill guidati dalla tinta | **risolto (v0.2)** (resta irrisolvibile un verde *identico* al pannello) |
-| Sfocatura di movimento | media | motion blur con esposizione stimata | **risolto (v0.2)** |
+| Sfocatura di movimento | media | motion blur con esposizione stimata; lati con lo spessore della tela visibile esclusi dalla stima | **risolto (v0.2)**; nel reveal stima corretta da −30% a ±0.03 (resta +0.07 con esposizioni brevi, 3.17) |
 | Quadro più nitido/pulito della scena | media | nitidezza stimata, grana | **risolto (v0.2)** |
 | Bordi delle dita "mangiati" o con alone | media | chiave a due colori in luce lineare, despill | **risolto (v0.2)** |
 | Video HDR dell'iPhone | media | libplacebo/zscale | **gestito e testato (v0.2)** su un video HLG generato; da provare su un file reale |

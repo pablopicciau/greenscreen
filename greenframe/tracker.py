@@ -36,7 +36,11 @@ from .keyer import PanelColor, generic_green_mask
 
 # 2: luminosità del pannello in luce lineare, larghezza dei bordi, giunzioni a
 # T, modello di colore, otturatore e nitidezza stimati.
-TRACK_VERSION = 2
+# 3: scenario "reveal" (rilevamenti forti, ri-aggancio, tracking all'indietro,
+# quadri grandi fuori inquadratura) ed esposizione stimata senza i lati
+# accanto ai quali si vede lo spessore della tela: le tracce precedenti
+# vengono rifatte.
+TRACK_VERSION = 3
 
 # Stati possibili di un fotogramma nella traccia.
 STATUS_OK = "ok"              # misurato

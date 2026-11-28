@@ -113,8 +113,9 @@ def normal_speeds(quads: np.ndarray, t: int) -> np.ndarray | None:
     return out
 
 
-def estimate_blur(edge_width: np.ndarray, quads: np.ndarray, min_samples: int = 30
-                  ) -> tuple[float, float, dict] | None:
+def estimate_blur(edge_width: np.ndarray, quads: np.ndarray, min_samples: int = 30,
+                  focal: float | None = None, image_size: tuple[int, int] | None = None,
+                  max_side_visibility: float = -0.02) -> tuple[float, float, dict] | None:
     """Stima ``(sigma, shutter, info)`` da larghezze dei bordi (T, 4) e traccia (T, 4, 2).
 
     ``shutter`` è la frazione 0-1 del tempo tra fotogrammi con otturatore
@@ -122,13 +123,31 @@ def estimate_blur(edge_width: np.ndarray, quads: np.ndarray, min_samples: int = 
     numero di campioni e se l'otturatore è osservabile (servono bordi in
     movimento: se il pannello è quasi fermo per tutto il video l'otturatore
     resta al valore tipico 0.5, che in quel caso non conta).
+
+    Con ``focal`` e ``image_size`` si escludono i lati accanto ai quali si
+    vede lo **spessore** del pannello (vedi
+    :func:`geometry.side_face_visibility`). Quando una tela ruota (il
+    "reveal"), il lato più vicino alla camera si muove più veloce degli altri
+    e ha attaccata la striscia della faccia laterale, che si muove con lui e
+    si mescola nella sfocatura di movimento. La larghezza misurata non segue
+    più il modello: nei test l'esposizione risultava più corta del 25-30%.
+    Il lato opposto invece confina direttamente con lo sfondo e resta valido.
     """
+    from . import geometry as geo
+
     ws, vs = [], []
+    excluded = 0
     for t in range(1, len(quads) - 1):
         sp = normal_speeds(quads, t)
         if sp is None:
             continue
+        vis = None
+        if focal is not None and image_size is not None:
+            vis = geo.side_face_visibility(quads[t], focal, image_size)
         for s in range(4):
+            if vis is not None and vis[s] > max_side_visibility:
+                excluded += int(np.isfinite(edge_width[t, s]))
+                continue
             w = edge_width[t, s]
             if np.isfinite(w) and 0.2 < w < 60:
                 ws.append(w)
@@ -155,7 +174,8 @@ def estimate_blur(edge_width: np.ndarray, quads: np.ndarray, min_samples: int = 
     if not observable:
         shutter = 0.5
     return sigma, shutter, {"samples": int(len(ws)), "moving": int(moving.sum()),
-                            "shutter_observable": bool(observable)}
+                            "shutter_observable": bool(observable),
+                            "excluded_side_faces": excluded}
 
 
 def render_blur_sigma(lens_sigma: float | None) -> float:

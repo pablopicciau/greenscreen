@@ -114,7 +114,10 @@ def analyze(video_path: str, cfg: Config, track_path: str | None = None,
             f"sono stati ricostruiti.")
     track.smooth = smooth_track(track, cfg.track.smooth_half_window, cfg.track.outlier_px)
     if track.edge_width is not None:
-        est = estimate_blur(track.edge_width, track.smooth)
+        # La focale (anche solo predefinita) serve a riconoscere i lati accanto ai
+        # quali si vede lo spessore della tela: lì il motion blur non è misurabile.
+        est = estimate_blur(track.edge_width, track.smooth, focal=track.focal,
+                            image_size=(track.width, track.height))
         if est is not None:
             track.lens_sigma, track.shutter, info_blur = est
             if not info_blur["shutter_observable"]:

@@ -394,7 +394,7 @@ def sample_linear(img_u8: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarra
 
 
 def _edge_profiles(img_u8: np.ndarray, base: np.ndarray, normal: np.ndarray, steps: np.ndarray,
-                   offset: tuple[int, int]):
+                   offset: tuple[int, int], residual: bool = False):
     """Profili di colore (luce lineare) lungo la normale, normalizzati 1 (dentro) -> 0 (fuori).
 
     Il bordo vero è dove la copertura del pannello vale 0.5: in luce lineare
@@ -404,7 +404,12 @@ def _edge_profiles(img_u8: np.ndarray, base: np.ndarray, normal: np.ndarray, ste
     colore dello sfondo (anche un verde diverso da quello del pannello) e
     per qualunque sfocatura simmetrica (obiettivo, movimento).
 
-    Ritorna ``(p, colore_dentro, colore_fuori, contrasto²)``.
+    Ritorna ``(p, colore_dentro, colore_fuori, contrasto²)``; con
+    ``residual=True`` anche il **residuo a due colori** (S, K): distanza di
+    ogni campione dalla retta colore_fuori -> colore_dentro, relativa al
+    contrasto. In un bordo pulito ogni pixel è una miscela dei due soli
+    colori e il residuo è rumore (~0.03); un terzo colore mescolato nella
+    transizione (il lato bianco della tela, un dito) lo fa crescere.
     """
     ox, oy = offset
     samples = base[:, None, :] + steps[None, :, None] * normal       # (S, K, 2)
@@ -415,7 +420,64 @@ def _edge_profiles(img_u8: np.ndarray, base: np.ndarray, normal: np.ndarray, ste
     dvec = c_in - c_out
     dd = (dvec * dvec).sum(axis=1)
     p = ((prof - c_out[:, None]) * dvec[:, None]).sum(axis=2) / np.maximum(dd, 1e-9)[:, None]
-    return p, c_in, c_out, dd
+    if not residual:
+        return p, c_in, c_out, dd
+    recon = c_out[:, None] + p[..., None] * dvec[:, None]                # miscela a due colori
+    perp = np.linalg.norm(prof - recon, axis=2) / np.sqrt(np.maximum(dd, 1e-9))[:, None]
+    return p, c_in, c_out, dd, perp
+
+
+def _blur_shaped(p: np.ndarray, x25: np.ndarray, x50: np.ndarray, x75: np.ndarray,
+                 perp: np.ndarray | None = None, max_residual: float = 0.1) -> np.ndarray:
+    """Profili (S, K) che hanno la forma di un bordo netto sfocato.
+
+    Un gradino sfocato da obiettivo e movimento (gaussiana ⊗ rettangolo, nucleo
+    simmetrico) dà un profilo **simmetrico** attorno al livello 50% e con un
+    rapporto fisso tra larghezza 10-90% e larghezza 25-75%: 1.6 per il solo
+    rettangolo, 1.9 per la sola gaussiana (un po' meno con la nitidezza
+    artificiale dei telefoni, che rende i bordi più ripidi). Inoltre, oltre
+    la zona di transizione, il profilo è **piatto** da entrambe le parti
+    (dentro: pannello; fuori: sfondo). Il lato bianco della tela visto di
+    sbieco mentre il quadro ruota è una striscia attaccata al bordo che si
+    muove con lui: mescola un terzo colore nella sfocatura (la transizione
+    sembra più corta) e lascia fuori un secondo gradino (striscia -> sfondo).
+    Il secondo gradino è ciò che la tradisce. Anche un dito vicino o uno
+    sfondo molto disegnato vengono esclusi: si perdono campioni, non si
+    falsa la stima. Le posizioni sono in unità di campione, come quelle di
+    :func:`_first_crossing`.
+
+    Con un'esposizione lunga la striscia finisce *dentro* la sfocatura e il
+    secondo gradino sparisce: resta però il terzo colore mescolato nella
+    transizione. Se si passa ``perp`` (residuo a due colori di
+    :func:`_edge_profiles`) si scartano anche i profili il cui residuo medio
+    nella transizione supera ``max_residual`` (bordi puliti: ~0.03; accanto al
+    lato bianco della tela in rotazione: 0.2-0.8 nei test).
+    """
+    x90, ok90 = _first_crossing(p, 0.9)
+    x10, ok10 = _first_crossing(p, 0.1)
+    half = 0.5 * (x25 - x75)             # semi-larghezza 25-75%
+    half_out = 0.5 * (x10 - x90)         # semi-larghezza 10-90%
+    # Tolleranze: 0.5 campioni (0.25 px) di rumore più il 20% della larghezza.
+    sym_in = np.abs(x50 - 0.5 * (x25 + x75)) <= 0.2 * half + 0.5
+    sym_out = np.abs(x50 - 0.5 * (x10 + x90)) <= 0.2 * half_out + 0.5
+    ratio = half_out / np.maximum(half, 1e-6)
+    # Parti piatte: oltre la transizione (più 2 campioni = 1 px di margine)
+    # l'escursione del profilo deve restare piccola. Servono almeno 3
+    # campioni per parte, altrimenti la piattezza non è verificabile.
+    idx = np.arange(p.shape[1])[None, :]
+    margin = (np.maximum(half, 2.0) + 2.0)[:, None]
+    flat = np.ones(len(p), dtype=bool)
+    for zone in (idx > x25[:, None] + margin, idx < x75[:, None] - margin):
+        hi = np.where(zone, p, -np.inf).max(axis=1)
+        lo = np.where(zone, p, np.inf).min(axis=1)
+        flat &= (zone.sum(axis=1) >= 3) & (hi - lo < 0.2)
+    ok = ok90 & ok10 & sym_in & sym_out & (ratio > 1.2) & (ratio < 2.4) & flat
+    if perp is not None:
+        # Residuo medio nella transizione (dal livello 90% al 10%, ±1 campione).
+        zone = (idx >= np.floor(x90)[:, None] - 1) & (idx <= np.ceil(x10)[:, None] + 1)
+        mean_r = (perp * zone).sum(axis=1) / np.maximum(zone.sum(axis=1), 1)
+        ok &= mean_r < max_residual
+    return ok
 
 
 def _refine_subpixel(
@@ -463,7 +525,7 @@ def _refine_subpixel(
         if np.dot(normal, centroid - a) > 0:
             normal = -normal
         base = a[None] + t_vals[:, None] * (b - a)[None]                 # (S, 2)
-        p, c_in, c_out, dd = _edge_profiles(img_u8, base, normal, steps, offset)
+        p, c_in, c_out, dd, perp = _edge_profiles(img_u8, base, normal, steps, offset, residual=True)
 
         # Lato interno "pannello": verde dominante (in luce lineare G >> R, B).
         g_in = c_in[:, 1]
@@ -498,8 +560,15 @@ def _refine_subpixel(
                 measured[s] = True
             support[s] = max(support[s], coverage)
             inl = np.abs(geo.point_line_distance(edge_pts, line)) < 0.75
-            if inl.sum() >= 8:
-                widths[s] = float(np.median(0.5 * (x25[good][inl] - x75[good][inl])))
+            # La larghezza si misura solo sui profili con la forma di una vera
+            # sfocatura (vedi _blur_shaped): accanto a un bordo ci può essere
+            # una striscia di un altro colore (il lato bianco della tela visto
+            # di sbieco mentre il quadro ruota, un dito) che sposta i livelli
+            # 25%/75% e falserebbe la stima dell'esposizione.
+            shaped = _blur_shaped(p[good], x25[good], x50[good], x75[good], perp[good])
+            use = inl & shaped
+            if use.sum() >= 8:
+                widths[s] = float(np.median(0.5 * (x25[good][use] - x75[good][use])))
 
     refined = geo.quad_from_lines(lines)
     if refined is None or not geo.is_convex(refined):

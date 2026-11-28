@@ -177,7 +177,23 @@ telaio, quadri grandi anche fuori inquadratura) e preset nel benchmark:
 python tools/benchmark.py --scenarios rivelazioni --render
 ```
 
-<!-- RISULTATI_REVEAL_README -->
+Risultati sulla scena di prova (tela 100×120 cm, Full HD, `--aspect 100x120`):
+
+* il quadro viene agganciato **dal primo fotogramma in cui compare**, anche se
+  prima, mentre sei di spalle, nella stanza c'è qualcosa di verdastro;
+* **nessun lampo verde** e nessuna modifica mentre si vede il retro della tela;
+* errore medio sugli angoli **0.36 px durante la rotazione** e **0.17 px**
+  quando il quadro è frontale (7 px nei 2-3 fotogrammi quasi di profilo,
+  dove il quadro è una striscia sottile);
+* il **motion blur** del giro è stimato correttamente anche con una tela
+  spessa: il lato della tela visto di sbieco viene riconosciuto ed escluso
+  dalla misura (prima l'esposizione risultava più corta del 30%).
+
+Prima di queste correzioni il quadro veniva agganciato a una macchia
+verdastra dello sfondo (errore oltre 400 px). Il benchmark copre anche la
+rotazione nell'altro verso, il giro veloce (~1 s) e i quadri grandi 120×150 e
+150×100 cm che escono dall'inquadratura; dettagli e limiti in
+[`docs/ANALISI_TECNICA.md`](docs/ANALISI_TECNICA.md) (sezione 3.17).
 
 ## Struttura del progetto
 
@@ -221,5 +237,12 @@ docs/                 analisi tecnica e guida alle riprese
   arriva a ~45 px (vedi l'analisi tecnica, sezione 3.16).
 * Una crocetta (marcatore) **toccata da un dito** si unisce al dito e resta
   visibile.
-* Provato su video sintetici e su tre clip reali (telefoni con schermo verde
-  tenuti in mano): manca ancora la prova su una tua ripresa con il pannello.
+* Reveal con un quadro che alla fine esce dall'inquadratura da **entrambi i
+  lati**: la sua posizione orizzontale non si può misurare (proporzioni
+  esatte, ma la parte visibile del dipinto può spostarsi del 2-3% della
+  larghezza). Tieni almeno un bordo verticale nell'inquadratura.
+* **Lati della tela verdi**: restano strisce verdi mentre il quadro è di
+  spalle o di taglio. Colora di verde solo il fronte.
+* Provato su video sintetici (anche il reveal) e su tre clip reali (telefoni
+  con schermo verde tenuti in mano): manca ancora la prova su una tua
+  ripresa con il pannello.

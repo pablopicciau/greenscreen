@@ -55,7 +55,10 @@ Consigli specifici:
   luminosità e colori di tutta l'immagine proprio durante la rivelazione.
 * **Gira a velocità naturale**: un mezzo giro in 1-3 secondi va bene (provato
   anche in ~1 secondo); la sfocatura di movimento viene misurata e riprodotta
-  sul quadro.
+  sul quadro, anche con una tela spessa (il lato della tela che si vede
+  durante il giro viene escluso dalla misura). Se il quadro ti sembra troppo
+  mosso o troppo nitido rispetto a te mentre giri, puoi forzare l'esposizione
+  con `--shutter` (es. `--shutter 180`).
 * **Quadri grandi e inquadratura**: se alla fine il quadro esce
   dall'inquadratura su **entrambi i lati** (destra e sinistra, o alto e
   basso), la sua posizione in quella direzione non si può misurare: le

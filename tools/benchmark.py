@@ -23,7 +23,9 @@ di taglio, in rotazione, frontale) e con ``--render`` si misurano anche:
 * **lampo verde**: pixel di verde rimasti nel risultato sulla sagoma della
   tela (fronte e lati), fotogramma per fotogramma;
 * **falsi inserimenti**: fotogrammi in cui il fronte non è visibile (si vede
-  il retro) ma il programma ha modificato l'immagine.
+  il retro) ma il programma ha modificato l'immagine (più di 50 pixel cambiati
+  di oltre 8 livelli). Un quad presente su un fotogramma di retro non basta:
+  il rendering sostituisce solo dove c'è il verde del pannello.
 
 Uso:
     python tools/benchmark.py                       # tutti gli scenari, Full HD, 15 s
@@ -228,9 +230,12 @@ def render_metrics(video: Path, track, painting: Path, meta: dict, cfg: Config,
             green = (o16[..., 1] - np.maximum(o16[..., 0], o16[..., 2]) > 35) & (o16[..., 1] > 50)
             leak[i] = int((green & zone).sum())
             if phases[i] == "retro":
-                # Si vede il retro: il programma non deve inserire nulla.
+                # Si vede il retro: il programma non deve inserire nulla
+                # (conta il risultato, non la sola presenza di un quad).
                 if _frame_changed(i, track):
-                    changed_retro.append(i)
+                    diff = np.abs(out.astype(np.int16) - src.astype(np.int16)).max(axis=2)
+                    if int((diff > 8).sum()) > 50:
+                        changed_retro.append(i)
                 continue
         if i % step:
             continue

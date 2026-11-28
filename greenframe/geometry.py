@@ -261,6 +261,61 @@ def intrinsics(focal: float, image_size: tuple[int, int]) -> np.ndarray:
     return np.array([[focal, 0, (w_img - 1) / 2.0], [0, focal, (h_img - 1) / 2.0], [0, 0, 1.0]])
 
 
+def side_face_visibility(quad: np.ndarray, focal: float, image_size: tuple[int, int]
+                         ) -> np.ndarray | None:
+    """Quanto si vede lo **spessore** del pannello accanto a ciascun lato.
+
+    Una tela ha uno spessore (2-5 cm): le sue facce laterali sono
+    perpendicolari al fronte. Per il lato ``s`` (dagli angoli ``s`` e
+    ``s+1``) si ritorna il seno dell'angolo sotto cui la camera vede la
+    faccia laterale attaccata a quel lato:
+
+    * ``> 0``: la faccia è visibile, quindi accanto al bordo (fuori dal fronte)
+      c'è una striscia di un altro colore, larga circa spessore × seno;
+    * ``<= 0``: la faccia è nascosta dietro il fronte e oltre il bordo si
+      vede direttamente lo sfondo.
+
+    Di due lati opposti al massimo uno ha la faccia visibile: quello più
+    vicino alla camera (quando il quadro ruota, quello che si muove più
+    veloce nell'immagine). Non serve conoscere lo spessore. Ritorna None se
+    la geometria è degenere.
+
+    Come: la normale del piano è ``Kᵀ·l∞`` (``l∞`` = retta di fuga, per i due
+    punti di fuga dei lati opposti); gli angoli in 3D sono i raggi di vista
+    intersecati con il piano ``n·X = 1`` (la scala non conta). La faccia
+    laterale del lato ``s`` sta nel piano che contiene il lato e la normale:
+    è visibile se la camera (l'origine) sta dalla parte esterna.
+    """
+    K = intrinsics(focal, image_size)
+    k_inv = np.linalg.inv(K)
+    lines = quad_lines(quad)
+    vanish_h = np.cross(lines[0], lines[2])          # fuga dei lati alto/basso
+    vanish_v = np.cross(lines[1], lines[3])          # fuga dei lati destro/sinistro
+    normal = K.T @ np.cross(vanish_h, vanish_v)
+    if not np.all(np.isfinite(normal)) or np.linalg.norm(normal) < 1e-12:
+        return None
+    normal /= np.linalg.norm(normal)
+    rays = (k_inv @ np.c_[quad, np.ones(4)].T).T     # (4, 3) raggi di vista degli angoli
+    depth = rays @ normal
+    if np.all(depth < 0):
+        normal, depth = -normal, -depth
+    if np.any(depth <= 1e-12):
+        return None                                   # angoli da parti opposte del piano
+    corners3d = rays / depth[:, None]
+    center = corners3d.mean(axis=0)
+    out = np.zeros(4)
+    for s in range(4):
+        a, b = corners3d[s], corners3d[(s + 1) % 4]
+        mid = 0.5 * (a + b)
+        outward = np.cross(normal, b - a)            # nel piano, perpendicolare al lato
+        if np.dot(outward, mid - center) < 0:
+            outward = -outward
+        outward /= max(np.linalg.norm(outward), 1e-12)
+        # Seno dell'angolo tra il raggio verso la camera e il piano della faccia.
+        out[s] = float(np.dot(-mid, outward) / max(np.linalg.norm(mid), 1e-12))
+    return out
+
+
 def complete_by_ratio(
     lines: list[np.ndarray],
     missing: int,
